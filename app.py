@@ -5,10 +5,12 @@ from plyer import notification
 import flet as ft
 from database import (
     create_users_table, create_medications_table, create_dose_records_table,
+    create_care_recipients_table,
     insert_user, hash_password, login_user, get_user_by_email,
     insert_medication, get_medications_for_user,
     insert_dose_record, get_dose_history_for_user,
-    update_medication, delete_medication
+    update_medication, delete_medication,
+    insert_care_recipient, get_care_recipients_for_caregiver
 )
 
 def main(page: ft.Page):
@@ -60,6 +62,42 @@ def main(page: ft.Page):
     def mark_dose(medication_id, status):
         insert_dose_record(medication_id, status)
         refresh_dose_history()
+        page.update()
+
+    care_recipients_list = ft.Column()
+    recipient_name_field = ft.TextField(label="Recipient Name")
+    recipient_relationship_field = ft.TextField(label="Relationship (e.g. Mother, Father)")
+    recipient_message = ft.Text(value="")
+
+    def refresh_care_recipients_list():
+        care_recipients_list.controls.clear()
+        if current_user["id"] is None:
+            return
+        recipients = get_care_recipients_for_caregiver(current_user["id"])
+        for recipient in recipients:
+            care_recipients_list.controls.append(
+                ft.Text(f"{recipient[2]} ({recipient[3]})")
+            )
+
+    def add_recipient_clicked(e):
+        if current_user["id"] is None:
+            recipient_message.value = "Please log in first."
+            page.update()
+            return
+
+        name = recipient_name_field.value
+        relationship = recipient_relationship_field.value
+
+        if not name or not relationship:
+            recipient_message.value = "Please enter both name and relationship."
+            page.update()
+            return
+
+        insert_care_recipient(current_user["id"], name, relationship)
+        recipient_message.value = f"Added {name} as a care recipient."
+        recipient_name_field.value = ""
+        recipient_relationship_field.value = ""
+        refresh_care_recipients_list()
         page.update()
 
     med_name_field = ft.TextField(label="Medication Name")
@@ -186,6 +224,7 @@ def main(page: ft.Page):
             current_user["email"] = user[2]
             refresh_medications_list()
             refresh_dose_history()
+            refresh_care_recipients_list()
             asyncio.create_task(page.push_route("/dashboard"))
 
     def logout_clicked(e):
@@ -244,6 +283,12 @@ def main(page: ft.Page):
                         ft.Divider(),
                         ft.Text("Dose History", weight=ft.FontWeight.BOLD),
                         dose_history_list,
+                        ft.Divider(),
+                        ft.Text("People You Care For", weight=ft.FontWeight.BOLD),
+                        recipient_name_field, recipient_relationship_field,
+                        ft.Button("Add Care Recipient", on_click=add_recipient_clicked),
+                        recipient_message,
+                        care_recipients_list,
                     ],
                     scroll=ft.ScrollMode.AUTO,
                 )
@@ -257,4 +302,5 @@ def main(page: ft.Page):
 create_users_table()
 create_medications_table()
 create_dose_records_table()
+create_care_recipients_table()
 ft.run(main)
