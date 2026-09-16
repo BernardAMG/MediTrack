@@ -79,6 +79,16 @@ def create_care_recipients_table():
     conn.commit()
     conn.close()
 
+def add_recipient_id_column():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE medications ADD COLUMN recipient_id INTEGER REFERENCES care_recipients (id)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    conn.close()
+
 def insert_user(name, email, password_hash):
     conn = get_connection()
     cursor = conn.cursor()
@@ -115,18 +125,18 @@ def login_user(email, password):
     if user is None:
         return False, "No account found with that email."
 
-    stored_hash = user[3]  # column order: id, name, email, password_hash, created_at
+    stored_hash = user[3]
     if check_password(password, stored_hash):
         return True, f"Welcome back, {user[1]}!"
     else:
         return False, "Incorrect password."
 
-def insert_medication(user_id, name, dosage, time, frequency):
+def insert_medication(user_id, name, dosage, time, frequency, recipient_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO medications (user_id, name, dosage, time, frequency) VALUES (?, ?, ?, ?, ?)",
-        (user_id, name, dosage, time, frequency)
+        "INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, name, dosage, time, frequency, recipient_id)
     )
     conn.commit()
     conn.close()
@@ -134,21 +144,28 @@ def insert_medication(user_id, name, dosage, time, frequency):
 def get_medications_for_user(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM medications WHERE user_id = ?", (user_id,))
+    cursor.execute("""
+        SELECT medications.id, medications.user_id, medications.name, medications.dosage,
+               medications.time, medications.frequency, medications.created_at,
+               medications.recipient_id, care_recipients.name
+        FROM medications
+        LEFT JOIN care_recipients ON medications.recipient_id = care_recipients.id
+        WHERE medications.user_id = ?
+    """, (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def update_medication(medication_id, name, dosage, time, frequency):
+def update_medication(medication_id, name, dosage, time, frequency, recipient_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
         UPDATE medications
-        SET name = ?, dosage = ?, time = ?, frequency = ?
+        SET name = ?, dosage = ?, time = ?, frequency = ?, recipient_id = ?
         WHERE id = ?
         """,
-        (name, dosage, time, frequency, medication_id)
+        (name, dosage, time, frequency, recipient_id, medication_id)
     )
     conn.commit()
     conn.close()
