@@ -1,10 +1,10 @@
 # MediTrack
 
-A medication reminder and management app built to help patients (and eventually caregivers) keep track of medications, schedules, doses, and history — built in Python with a real database, authentication, and background notifications.
+A medication reminder and management app built to help patients (and eventually caregivers) keep track of medications, schedules, doses, and history, built in Python with a real database, authentication, and background notifications.
 
 ## Why I built this
 
-During my vacation, I was caring for a family member who needed regular medication. Even wanting to do it right, it was easy to lose track — I once realized an expensive medication had expired because I'd repeatedly forgotten to administer it. I started with a simple Apple Shortcuts reminder for myself, and that small workaround eventually became the idea for building a proper application.
+During my vacation, I was caring for a family member who needed regular medication. Even wanting to do it right, it was easy to lose track, I once realized an expensive medication had expired because I'd repeatedly forgotten to administer it. I started with a simple Apple Shortcuts reminder for myself, and that small workaround eventually became the idea for building a proper application.
 
 ## Features
 
@@ -91,7 +91,7 @@ python app.py
 
 ## Important note
 
-MediTrack is a reminder and management tool only. It does not diagnose conditions, prescribe medication, or offer medical advice — it manages information and schedules that the user has entered themselves. Always consult a doctor or pharmacist for medical decisions.
+MediTrack is a reminder and management tool only. It does not diagnose conditions, prescribe medication, or offer medical advice, it manages information and schedules that the user has entered themselves. Always consult a doctor or pharmacist for medical decisions.
 
 git add README.md
 git commit -m "Add README with project overview, architecture, and setup instructions"
