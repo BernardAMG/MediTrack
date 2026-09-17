@@ -1,17 +1,21 @@
+
 import asyncio
 import threading
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from plyer import notification
 import flet as ft
 from database import (
     create_users_table, create_medications_table, create_dose_records_table,
-    create_care_recipients_table, add_recipient_id_column,
+    create_care_recipients_table, add_recipient_id_column, add_quantity_and_expiry_columns,
     insert_user, hash_password, login_user, get_user_by_email,
     insert_medication, get_medications_for_user,
     insert_dose_record, get_dose_history_for_user,
-    update_medication, delete_medication,
+    update_medication, delete_medication, decrement_quantity,
     insert_care_recipient, get_care_recipients_for_caregiver
 )
+
+LOW_STOCK_THRESHOLD = 5
+EXPIRY_WARNING_DAYS = 30
 
 def main(page: ft.Page):
     page.title = "MediTrack"
@@ -49,6 +53,7 @@ def main(page: ft.Page):
 
     medications_list = ft.Column()
     dose_history_list = ft.Column()
+    warnings_list = ft.Column()
 
     def refresh_dose_history():
         dose_history_list.controls.clear()
@@ -61,7 +66,11 @@ def main(page: ft.Page):
 
     def mark_dose(medication_id, status):
         insert_dose_record(medication_id, status)
+        if status == "taken":
+            decrement_quantity(medication_id)
         refresh_dose_history()
+        refresh_medications_list()
+        refresh_warnings_list()
         page.update()
 
     care_recipients_list = ft.Column()
@@ -73,6 +82,8 @@ def main(page: ft.Page):
     med_dosage_field = ft.TextField(label="Dosage (e.g. 500mg)")
     med_time_field = ft.TextField(label="Time (HH:MM)")
     med_frequency_field = ft.TextField(label="Frequency (e.g. daily)")
+    med_quantity_field = ft.TextField(label="Quantity Remaining (optional)")
+    med_expiry_field = ft.TextField(label="Expiry Date YYYY-MM-DD (optional)")
     recipient_dropdown = ft.Dropdown(
         label="For",
         options=[ft.dropdown.Option(key="self", text="Myself")],
@@ -133,6 +144,8 @@ def main(page: ft.Page):
         cancel_edit_button.visible = True
         recipient_id = med[7]
         recipient_dropdown.value = "self" if recipient_id is None else str(recipient_id)
+        med_quantity_field.value = str(med[9]) if med[9] is not None else ""
+        med_expiry_field.value = med[10] if med[10] else ""
         page.update()
 
     def exit_edit_mode():
@@ -141,6 +154,8 @@ def main(page: ft.Page):
         med_dosage_field.value = ""
         med_time_field.value = ""
         med_frequency_field.value = ""
+        med_quantity_field.value = ""
+        med_expiry_field.value = ""
         med_form_title.value = "Add Medication"
         save_medication_button.text = "Add Medication"
         cancel_edit_button.visible = False
@@ -155,6 +170,7 @@ def main(page: ft.Page):
         if editing_medication_id["value"] == medication_id:
             exit_edit_mode()
         refresh_medications_list()
+        refresh_warnings_list()
         page.update()
 
     def refresh_medications_list():
@@ -165,12 +181,45 @@ def main(page: ft.Page):
         for med in meds:
             med_id = med[0]
             for_text = f" — for {med[8]}" if med[8] else ""
-            med_text = f"{med[2]} — {med[3]} at {med[4]} ({med[5]}){for_text}"
+            quantity_text = f" — {med[9]} left" if med[9] is not None else ""
+            expiry_text = f" — expires {med[10]}" if med[10] else ""
+            med_text = f"{med[2]} — {med[3]} at {med[4]} ({med[5]}){for_text}{quantity_text}{expiry_text}"
             take_button = ft.TextButton("Take", on_click=lambda e, mid=med_id: mark_dose(mid, "taken"))
             skip_button = ft.TextButton("Skip", on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"))
             edit_button = ft.TextButton("Edit", on_click=lambda e, m=med: enter_edit_mode(m))
             delete_button = ft.TextButton("Delete", on_click=lambda e, mid=med_id: delete_clicked(mid))
             medications_list.controls.append(ft.Row([ft.Text(med_text), take_button, skip_button, edit_button, delete_button]))
+
+    def refresh_warnings_list():
+        warnings_list.controls.clear()
+        if current_user["id"] is None:
+            return
+        meds = get_medications_for_user(current_user["id"])
+        today = date.today()
+        for med in meds:
+            name = med[2]
+            quantity = med[9]
+            expiry_str = med[10]
+
+            if quantity is not None and quantity <= LOW_STOCK_THRESHOLD:
+                warnings_list.controls.append(
+                    ft.Text(f"⚠️ {name}: only {quantity} left", color=ft.Colors.ORANGE_700)
+                )
+
+            if expiry_str:
+                try:
+                    expiry = date.fromisoformat(expiry_str)
+                    days_left = (expiry - today).days
+                    if days_left < 0:
+                        warnings_list.controls.append(
+                            ft.Text(f"⚠️ {name}: expired on {expiry_str}", color=ft.Colors.RED_700)
+                        )
+                    elif days_left <= EXPIRY_WARNING_DAYS:
+                        warnings_list.controls.append(
+                            ft.Text(f"⚠️ {name}: expires in {days_left} days ({expiry_str})", color=ft.Colors.ORANGE_700)
+                        )
+                except ValueError:
+                    pass
 
     def save_medication_clicked(e):
         if current_user["id"] is None:
@@ -191,15 +240,21 @@ def main(page: ft.Page):
         selected = recipient_dropdown.value
         recipient_id = None if selected == "self" else int(selected)
 
+        quantity_text = med_quantity_field.value
+        quantity_remaining = int(quantity_text) if quantity_text.strip() else None
+
+        expiry_date = med_expiry_field.value.strip() or None
+
         if editing_medication_id["value"] is None:
-            insert_medication(current_user["id"], name, dosage, time, frequency, recipient_id)
+            insert_medication(current_user["id"], name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
             med_message.value = f"Added {name}."
         else:
-            update_medication(editing_medication_id["value"], name, dosage, time, frequency, recipient_id)
+            update_medication(editing_medication_id["value"], name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
             med_message.value = f"Updated {name}."
             exit_edit_mode()
 
         refresh_medications_list()
+        refresh_warnings_list()
         page.update()
 
     save_medication_button.on_click = save_medication_clicked
@@ -246,6 +301,7 @@ def main(page: ft.Page):
             refresh_dose_history()
             refresh_care_recipients_list()
             refresh_recipient_dropdown()
+            refresh_warnings_list()
             asyncio.create_task(page.push_route("/dashboard"))
 
     def logout_clicked(e):
@@ -294,8 +350,12 @@ def main(page: ft.Page):
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
                         ft.Divider(),
+                        ft.Text("Warnings", weight=ft.FontWeight.BOLD),
+                        warnings_list,
+                        ft.Divider(),
                         med_form_title,
                         med_name_field, med_dosage_field, med_time_field, med_frequency_field,
+                        med_quantity_field, med_expiry_field,
                         recipient_dropdown,
                         ft.Row([save_medication_button, cancel_edit_button]),
                         med_message,
@@ -326,4 +386,6 @@ create_medications_table()
 create_dose_records_table()
 create_care_recipients_table()
 add_recipient_id_column()
+add_quantity_and_expiry_columns()
+print("About to launch Flet")
 ft.run(main)

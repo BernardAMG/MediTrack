@@ -89,6 +89,20 @@ def add_recipient_id_column():
         pass
     conn.close()
 
+def add_quantity_and_expiry_columns():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE medications ADD COLUMN quantity_remaining INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE medications ADD COLUMN expiry_date TEXT")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
 def insert_user(name, email, password_hash):
     conn = get_connection()
     cursor = conn.cursor()
@@ -131,12 +145,15 @@ def login_user(email, password):
     else:
         return False, "Incorrect password."
 
-def insert_medication(user_id, name, dosage, time, frequency, recipient_id=None):
+def insert_medication(user_id, name, dosage, time, frequency, recipient_id=None, quantity_remaining=None, expiry_date=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, name, dosage, time, frequency, recipient_id)
+        """
+        INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
     )
     conn.commit()
     conn.close()
@@ -147,7 +164,8 @@ def get_medications_for_user(user_id):
     cursor.execute("""
         SELECT medications.id, medications.user_id, medications.name, medications.dosage,
                medications.time, medications.frequency, medications.created_at,
-               medications.recipient_id, care_recipients.name
+               medications.recipient_id, care_recipients.name,
+               medications.quantity_remaining, medications.expiry_date
         FROM medications
         LEFT JOIN care_recipients ON medications.recipient_id = care_recipients.id
         WHERE medications.user_id = ?
@@ -156,16 +174,16 @@ def get_medications_for_user(user_id):
     conn.close()
     return rows
 
-def update_medication(medication_id, name, dosage, time, frequency, recipient_id=None):
+def update_medication(medication_id, name, dosage, time, frequency, recipient_id=None, quantity_remaining=None, expiry_date=None):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
         UPDATE medications
-        SET name = ?, dosage = ?, time = ?, frequency = ?, recipient_id = ?
+        SET name = ?, dosage = ?, time = ?, frequency = ?, recipient_id = ?, quantity_remaining = ?, expiry_date = ?
         WHERE id = ?
         """,
-        (name, dosage, time, frequency, recipient_id, medication_id)
+        (name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date, medication_id)
     )
     conn.commit()
     conn.close()
@@ -174,6 +192,16 @@ def delete_medication(medication_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM medications WHERE id = ?", (medication_id,))
+    conn.commit()
+    conn.close()
+
+def decrement_quantity(medication_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE medications SET quantity_remaining = quantity_remaining - 1 WHERE id = ? AND quantity_remaining IS NOT NULL AND quantity_remaining > 0",
+        (medication_id,)
+    )
     conn.commit()
     conn.close()
 
