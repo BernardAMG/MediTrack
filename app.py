@@ -1,4 +1,3 @@
-
 import asyncio
 import threading
 from datetime import datetime, date, timedelta
@@ -54,6 +53,7 @@ def main(page: ft.Page):
     medications_list = ft.Column()
     dose_history_list = ft.Column()
     warnings_list = ft.Column()
+    adherence_text = ft.Text(value="")
 
     def refresh_dose_history():
         dose_history_list.controls.clear()
@@ -64,11 +64,25 @@ def main(page: ft.Page):
             med_name, status, taken_at = record
             dose_history_list.controls.append(ft.Text(f"{taken_at} — {med_name}: {status}"))
 
+    def refresh_adherence_stats():
+        if current_user["id"] is None:
+            adherence_text.value = ""
+            return
+        history = get_dose_history_for_user(current_user["id"])
+        total = len(history)
+        if total == 0:
+            adherence_text.value = "No doses logged yet."
+            return
+        taken_count = sum(1 for record in history if record[1] == "taken")
+        percentage = round((taken_count / total) * 100)
+        adherence_text.value = f"{percentage}% adherence ({taken_count} of {total} doses taken)"
+
     def mark_dose(medication_id, status):
         insert_dose_record(medication_id, status)
         if status == "taken":
             decrement_quantity(medication_id)
         refresh_dose_history()
+        refresh_adherence_stats()
         refresh_medications_list()
         refresh_warnings_list()
         page.update()
@@ -299,6 +313,7 @@ def main(page: ft.Page):
             current_user["email"] = user[2]
             refresh_medications_list()
             refresh_dose_history()
+            refresh_adherence_stats()
             refresh_care_recipients_list()
             refresh_recipient_dropdown()
             refresh_warnings_list()
@@ -364,6 +379,7 @@ def main(page: ft.Page):
                         medications_list,
                         ft.Divider(),
                         ft.Text("Dose History", weight=ft.FontWeight.BOLD),
+                        adherence_text,
                         dose_history_list,
                         ft.Divider(),
                         ft.Text("People You Care For", weight=ft.FontWeight.BOLD),
@@ -387,5 +403,4 @@ create_dose_records_table()
 create_care_recipients_table()
 add_recipient_id_column()
 add_quantity_and_expiry_columns()
-print("About to launch Flet")
 ft.run(main)
