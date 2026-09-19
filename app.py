@@ -92,6 +92,8 @@ def main(page: ft.Page):
     recipient_relationship_field = ft.TextField(label="Relationship (e.g. Mother, Father)")
     recipient_message = ft.Text(value="")
 
+    more_options_visible = {"value": False}
+
     med_name_field = ft.TextField(label="Medication Name")
     med_dosage_field = ft.TextField(label="Dosage (e.g. 500mg)")
     med_time_field = ft.TextField(label="Time (HH:MM)")
@@ -107,6 +109,21 @@ def main(page: ft.Page):
     med_form_title = ft.Text("Add Medication", weight=ft.FontWeight.BOLD)
     save_medication_button = ft.Button("Add Medication")
     cancel_edit_button = ft.TextButton("Cancel", visible=False)
+
+    more_options_container = ft.Container(
+        content=ft.Column([med_quantity_field, med_expiry_field], spacing=10),
+        bgcolor=ft.Colors.GREY_100,
+        border_radius=10,
+        padding=12,
+        visible=False,
+    )
+
+    def toggle_more_options(e):
+        more_options_container.visible = not more_options_container.visible
+        more_options_toggle.text = "Less options ▴" if more_options_container.visible else "More options ▾"
+        page.update()
+
+    more_options_toggle = ft.TextButton("More options ▾", on_click=toggle_more_options)
 
     def refresh_recipient_dropdown():
         recipients = get_care_recipients_for_caregiver(current_user["id"]) if current_user["id"] else []
@@ -174,6 +191,8 @@ def main(page: ft.Page):
         save_medication_button.text = "Add Medication"
         cancel_edit_button.visible = False
         recipient_dropdown.value = "self"
+        more_options_container.visible = False
+        more_options_toggle.text = "More options ▾"
 
     def cancel_edit_clicked(e):
         exit_edit_mode()
@@ -245,6 +264,7 @@ def main(page: ft.Page):
                 margin=ft.Margin.only(bottom=8),
             )
             medications_list.controls.append(card)
+
     def refresh_warnings_list():
         warnings_list.controls.clear()
         if current_user["id"] is None:
@@ -293,6 +313,7 @@ def main(page: ft.Page):
             padding=14,
         )
         warnings_list.controls.append(card)
+
     def save_medication_clicked(e):
         if current_user["id"] is None:
             med_message.value = "Please log in first."
@@ -426,12 +447,24 @@ def main(page: ft.Page):
                         ft.Text("Warnings", weight=ft.FontWeight.BOLD),
                         warnings_list,
                         ft.Divider(),
-                        med_form_title,
-                        med_name_field, med_dosage_field, med_time_field, med_frequency_field,
-                        med_quantity_field, med_expiry_field,
-                        recipient_dropdown,
-                        ft.Row([save_medication_button, cancel_edit_button]),
-                        med_message,
+                        ft.Container(
+                            content=ft.Column(
+                                [
+                                    med_form_title,
+                                    med_name_field, med_dosage_field, med_time_field, med_frequency_field,
+                                    recipient_dropdown,
+                                    more_options_toggle,
+                                    more_options_container,
+                                    ft.Row([save_medication_button, cancel_edit_button]),
+                                    med_message,
+                                ],
+                                spacing=10,
+                            ),
+                            bgcolor=ft.Colors.WHITE,
+                            border=ft.Border.all(1, ft.Colors.GREY_300),
+                            border_radius=12,
+                            padding=16,
+                        ),
                         ft.Divider(),
                         ft.Text("My Medications", weight=ft.FontWeight.BOLD),
                         medications_list,
