@@ -194,16 +194,57 @@ def main(page: ft.Page):
         meds = get_medications_for_user(current_user["id"])
         for med in meds:
             med_id = med[0]
-            for_text = f" — for {med[8]}" if med[8] else ""
-            quantity_text = f" — {med[9]} left" if med[9] is not None else ""
-            expiry_text = f" — expires {med[10]}" if med[10] else ""
-            med_text = f"{med[2]} — {med[3]} at {med[4]} ({med[5]}){for_text}{quantity_text}{expiry_text}"
-            take_button = ft.TextButton("Take", on_click=lambda e, mid=med_id: mark_dose(mid, "taken"))
-            skip_button = ft.TextButton("Skip", on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"))
-            edit_button = ft.TextButton("Edit", on_click=lambda e, m=med: enter_edit_mode(m))
-            delete_button = ft.TextButton("Delete", on_click=lambda e, mid=med_id: delete_clicked(mid))
-            medications_list.controls.append(ft.Row([ft.Text(med_text), take_button, skip_button, edit_button, delete_button]))
+            for_text = f" for {med[8]}" if med[8] else " for myself"
+            time_text = f"{med[4]}{for_text}"
 
+            take_button = ft.IconButton(
+                icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+                icon_color=ft.Colors.GREEN_600,
+                on_click=lambda e, mid=med_id: mark_dose(mid, "taken"),
+            )
+            skip_button = ft.IconButton(
+                icon=ft.Icons.CANCEL_OUTLINED,
+                icon_color=ft.Colors.GREY_500,
+                on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"),
+            )
+            edit_button = ft.IconButton(
+                icon=ft.Icons.EDIT_OUTLINED,
+                icon_color=ft.Colors.GREY_500,
+                on_click=lambda e, m=med: enter_edit_mode(m),
+            )
+            delete_button = ft.IconButton(
+                icon=ft.Icons.DELETE_OUTLINE,
+                icon_color=ft.Colors.RED_400,
+                on_click=lambda e, mid=med_id: delete_clicked(mid),
+            )
+
+            card = ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text("💊", size=18),
+                        ft.Column(
+                            [
+                                ft.Text(f"{med[2]} · {med[3]}", size=14, weight=ft.FontWeight.W_500),
+                                ft.Text(time_text, size=12, color=ft.Colors.GREY_600),
+                            ],
+                            spacing=2,
+                            expand=True,
+                        ),
+                        take_button,
+                        skip_button,
+                        edit_button,
+                        delete_button,
+                    ],
+                    alignment=ft.MainAxisAlignment.START,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                bgcolor=ft.Colors.WHITE,
+                border=ft.Border.all(1, ft.Colors.GREY_300),
+                border_radius=10,
+                padding=12,
+                margin=ft.Margin.only(bottom=8),
+            )
+            medications_list.controls.append(card)
     def refresh_warnings_list():
         warnings_list.controls.clear()
         if current_user["id"] is None:
