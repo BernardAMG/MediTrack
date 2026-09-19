@@ -83,10 +83,10 @@ python app.py
 - [x] Dose tracking + history
 - [x] Background reminders with desktop notifications
 - [x] Multi-screen navigation
-- [ ] Caregiver mode (manage medications for a care recipient)
-- [ ] Low-stock and expiry warnings
-- [ ] Adherence percentage / statistics
-- [ ] UI redesign (Figma-based visual pass)
+- [x] Caregiver mode (manage medications for a care recipient)
+- [x] Low-stock and expiry warnings
+- [x] Adherence percentage / statistics
+- [ ] UI redesign (in progress — card-based medication list and warnings card done; add-medication form and login screen still pending)
 - [ ] Automated tests
 
 ## Important note
