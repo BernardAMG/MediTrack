@@ -251,31 +251,48 @@ def main(page: ft.Page):
             return
         meds = get_medications_for_user(current_user["id"])
         today = date.today()
+        warning_lines = []
+
         for med in meds:
             name = med[2]
             quantity = med[9]
             expiry_str = med[10]
 
             if quantity is not None and quantity <= LOW_STOCK_THRESHOLD:
-                warnings_list.controls.append(
-                    ft.Text(f"⚠️ {name}: only {quantity} left", color=ft.Colors.ORANGE_700)
-                )
+                warning_lines.append(f"{name}: only {quantity} left")
 
             if expiry_str:
                 try:
                     expiry = date.fromisoformat(expiry_str)
                     days_left = (expiry - today).days
                     if days_left < 0:
-                        warnings_list.controls.append(
-                            ft.Text(f"⚠️ {name}: expired on {expiry_str}", color=ft.Colors.RED_700)
-                        )
+                        warning_lines.append(f"{name}: expired on {expiry_str}")
                     elif days_left <= EXPIRY_WARNING_DAYS:
-                        warnings_list.controls.append(
-                            ft.Text(f"⚠️ {name}: expires in {days_left} days ({expiry_str})", color=ft.Colors.ORANGE_700)
-                        )
+                        warning_lines.append(f"{name}: expires in {days_left} days ({expiry_str})")
                 except ValueError:
                     pass
 
+        if not warning_lines:
+            return
+
+        header = ft.Row(
+            [
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=16),
+                ft.Text(f"{len(warning_lines)} warning{'s' if len(warning_lines) != 1 else ''}",
+                        size=13, weight=ft.FontWeight.W_500, color=ft.Colors.ORANGE_800),
+            ],
+            spacing=6,
+        )
+
+        lines = [ft.Text(line, size=13, color=ft.Colors.ORANGE_800) for line in warning_lines]
+
+        card = ft.Container(
+            content=ft.Column([header] + lines, spacing=4),
+            bgcolor=ft.Colors.ORANGE_50,
+            border_radius=12,
+            padding=14,
+        )
+        warnings_list.controls.append(card)
     def save_medication_clicked(e):
         if current_user["id"] is None:
             med_message.value = "Please log in first."
