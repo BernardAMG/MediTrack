@@ -12,8 +12,10 @@ def check_password(plain_password, hashed_password):
         hashed_password.encode("utf-8")
     )
 
+DATABASE_FILE = "meditrack.db"
+
 def get_connection():
-    return sqlite3.connect("meditrack.db")
+    return sqlite3.connect(DATABASE_FILE)
 
 def create_users_table():
     conn = get_connection()
