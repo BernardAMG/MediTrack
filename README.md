@@ -76,6 +76,14 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## Running tests
+
+```bash
+python test_database.py
+```
+
+Tests use a separate `test_meditrack.db` file so they never touch your real data.
+
 ## Roadmap
 
 - [x] Authentication (registration, login, password hashing)
@@ -83,11 +91,11 @@ python app.py
 - [x] Dose tracking + history
 - [x] Background reminders with desktop notifications
 - [x] Multi-screen navigation
-- [ ] Caregiver mode (manage medications for a care recipient)
-- [ ] Low-stock and expiry warnings
-- [ ] Adherence percentage / statistics
-- [ ] UI redesign (Figma-based visual pass)
-- [ ] Automated tests
+- [x] Caregiver mode (manage medications for a care recipient)
+- [x] Low-stock and expiry warnings
+- [x] Adherence percentage / statistics
+- [x] UI redesign (Figma-based visual pass)
+- [x] Automated tests
 
 ## Important note
 
