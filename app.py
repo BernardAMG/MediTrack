@@ -1,20 +1,78 @@
 import asyncio
+import re
 import threading
 from datetime import datetime, date, timedelta
-from plyer import notification
+from win11toast import notify as win_notify
 import flet as ft
 from database import (
     create_users_table, create_medications_table, create_dose_records_table,
     create_care_recipients_table, add_recipient_id_column, add_quantity_and_expiry_columns,
     insert_user, hash_password, login_user, get_user_by_email,
-    insert_medication, get_medications_for_user,
+    insert_medication, insert_medications_batch, get_medications_for_user,
     insert_dose_record, get_dose_history_for_user,
     update_medication, delete_medication, decrement_quantity,
-    insert_care_recipient, get_care_recipients_for_caregiver
+    insert_care_recipient, update_care_recipient, delete_care_recipient, get_care_recipients_for_caregiver
 )
 
 LOW_STOCK_THRESHOLD = 5
 EXPIRY_WARNING_DAYS = 30
+
+def _parse_single_time(time_str):
+    if not time_str or not isinstance(time_str, str):
+        return None
+
+    cleaned = time_str.strip().upper()
+    cleaned = re.sub(r"\s*:\s*", ":", cleaned)
+    cleaned = cleaned.strip("()")
+
+    formats = [
+        "%H:%M",       # 14:30 or 08:30
+        "%I:%M %p",    # 02:30 PM
+        "%I:%M%p",     # 02:30PM
+        "%I %p",       # 2 PM
+        "%I%p",        # 2PM
+    ]
+
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            return parsed.strftime("%H:%M")
+        except ValueError:
+            continue
+
+    parts = cleaned.split(":")
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        h, m = int(parts[0]), int(parts[1])
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return f"{h:02d}:{m:02d}"
+
+    return None
+
+def normalize_time(time_str):
+    """
+    Parses one or multiple comma/semicolon-separated time strings.
+    Returns sorted, unique 'HH:MM, HH:MM, ...' string, or None if invalid.
+    """
+    if not time_str or not isinstance(time_str, str):
+        return None
+
+    raw_items = re.split(r"[,;]+", time_str.strip())
+    normalized_list = []
+    for item in raw_items:
+        clean_item = item.strip()
+        if not clean_item:
+            continue
+        parsed = _parse_single_time(clean_item)
+        if not parsed:
+            return None
+        normalized_list.append(parsed)
+
+    if not normalized_list:
+        return None
+
+    # Deduplicate and sort chronologically
+    sorted_unique = sorted(list(set(normalized_list)))
+    return ", ".join(sorted_unique)
 
 def main(page: ft.Page):
     page.title = "MediTrack"
@@ -26,24 +84,37 @@ def main(page: ft.Page):
     already_notified_today = set()
     editing_medication_id = {"value": None}
 
-    def send_alert(med):
-        title = "MediTrack Reminder"
-        message_text = f"Time to take {med[2]} ({med[3]})"
-        try:
-            notification.notify(title=title, message=message_text, timeout=10)
-        except Exception:
-            print(f"🔔 {title}: {message_text}")
+    def send_alert(med, scheduled_time=None):
+        time_display = f" at {scheduled_time}" if scheduled_time else ""
+        recipient_name = med[8]
+        if recipient_name:
+            title = f"MediTrack · {recipient_name}"
+            message_text = f"Time to give {med[2]} ({med[3]}) to {recipient_name}{time_display}"
+        else:
+            title = "MediTrack Reminder"
+            message_text = f"Time to take {med[2]} ({med[3]}){time_display}"
+
+        print(f"[send_alert] {message_text}")
+        win_notify(title, message_text, scenario="reminder")
 
     def watcher_loop(stop_event):
         while not stop_event.is_set():
             if current_user["id"] is not None:
                 now_str = datetime.now().strftime("%H:%M")
+                today_str = date.today().isoformat()
                 meds = get_medications_for_user(current_user["id"])
+                print(f"[watcher] now={now_str}, checking {len(meds)} medication(s)...")
                 for med in meds:
-                    key = (med[0], med[4])
-                    if med[4] == now_str and key not in already_notified_today:
-                        send_alert(med)
-                        already_notified_today.add(key)
+                    raw_times = med[4] or ""
+                    for item in re.split(r"[,;]+", raw_times):
+                        t = item.strip()
+                        if not t:
+                            continue
+                        normalized_t = _parse_single_time(t) or t
+                        key = (today_str, med[0], normalized_t)
+                        if normalized_t == now_str and key not in already_notified_today:
+                            send_alert(med, scheduled_time=normalized_t)
+                            already_notified_today.add(key)
             stop_event.wait(30)
 
     watcher_stop_event = threading.Event()
@@ -91,12 +162,16 @@ def main(page: ft.Page):
     recipient_name_field = ft.TextField(label="Recipient Name")
     recipient_relationship_field = ft.TextField(label="Relationship (e.g. Mother, Father)")
     recipient_message = ft.Text(value="")
+    editing_recipient_id = {"value": None}
+    recipient_form_title = ft.Text("People You Care For", weight=ft.FontWeight.BOLD)
+    save_recipient_button = ft.Button("Add Care Recipient")
+    cancel_recipient_edit_button = ft.TextButton("Cancel", visible=False)
 
     more_options_visible = {"value": False}
 
     med_name_field = ft.TextField(label="Medication Name")
     med_dosage_field = ft.TextField(label="Dosage (e.g. 500mg)")
-    med_time_field = ft.TextField(label="Time (HH:MM)")
+    med_time_field = ft.TextField(label="Time(s) (e.g. 08:00 or 08:00, 20:00)")
     med_frequency_field = ft.TextField(label="Frequency (e.g. daily)")
     med_quantity_field = ft.TextField(label="Quantity Remaining (optional)")
     med_expiry_field = ft.TextField(label="Expiry Date YYYY-MM-DD (optional)")
@@ -125,50 +200,280 @@ def main(page: ft.Page):
 
     more_options_toggle = ft.TextButton("More options ▾", on_click=toggle_more_options)
 
-    def refresh_recipient_dropdown():
+    def get_recipient_options():
         recipients = get_care_recipients_for_caregiver(current_user["id"]) if current_user["id"] else []
         options = [ft.dropdown.Option(key="self", text="Myself")]
         for recipient in recipients:
             options.append(ft.dropdown.Option(key=str(recipient[0]), text=recipient[2]))
+        return options
+
+    def refresh_recipient_dropdown():
+        options = get_recipient_options()
         recipient_dropdown.options = options
+        for row_box in batch_rows_column.controls:
+            if hasattr(row_box, "data") and "recipient" in row_box.data:
+                row_box.data["recipient"].options = options
 
-    def refresh_care_recipients_list():
-        care_recipients_list.controls.clear()
+    batch_rows_column = ft.Column(spacing=10)
+    batch_message = ft.Text(value="")
+
+    def create_batch_row():
+        row_name = ft.TextField(label="Medication Name", expand=2)
+        row_dosage = ft.TextField(label="Dosage (e.g. 500mg)", expand=1)
+        row_time = ft.TextField(label="Time(s) (e.g. 08:00, 20:00)", expand=2)
+        row_freq = ft.TextField(label="Frequency", value="daily", expand=1)
+        row_recipient = ft.Dropdown(
+            label="For",
+            options=get_recipient_options(),
+            value="self",
+            expand=1,
+        )
+
+        row_container = ft.Container()
+
+        def remove_row(e):
+            if len(batch_rows_column.controls) > 1:
+                batch_rows_column.controls.remove(row_container)
+                page.update()
+            else:
+                batch_message.value = "At least one medication row is required in batch mode."
+                batch_message.color = ft.Colors.RED_600
+                page.update()
+
+        remove_btn = ft.IconButton(
+            icon=ft.Icons.DELETE_OUTLINE,
+            icon_color=ft.Colors.RED_400,
+            tooltip="Remove this row",
+            on_click=remove_row,
+        )
+
+        row_container.content = ft.Column(
+            [
+                ft.Row([row_name, row_dosage, remove_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([row_time, row_freq, row_recipient]),
+            ],
+            spacing=8,
+        )
+        row_container.bgcolor = ft.Colors.GREY_50
+        row_container.border = ft.Border.all(1, ft.Colors.GREY_300)
+        row_container.border_radius = 8
+        row_container.padding = 10
+        row_container.data = {
+            "name": row_name,
+            "dosage": row_dosage,
+            "time": row_time,
+            "freq": row_freq,
+            "recipient": row_recipient,
+        }
+        return row_container
+
+    def add_batch_row_clicked(e):
+        batch_rows_column.controls.append(create_batch_row())
+        page.update()
+
+    def save_batch_clicked(e):
         if current_user["id"] is None:
+            batch_message.value = "Please log in first."
+            batch_message.color = ft.Colors.RED_600
+            page.update()
             return
-        recipients = get_care_recipients_for_caregiver(current_user["id"])
-        for recipient in recipients:
-            care_recipients_list.controls.append(
-                ft.Text(f"{recipient[2]} ({recipient[3]})")
-            )
 
-    def add_recipient_clicked(e):
+        to_insert = []
+        row_num = 1
+        for row_box in batch_rows_column.controls:
+            data = row_box.data
+            name = data["name"].value.strip() if data["name"].value else ""
+            dosage = data["dosage"].value.strip() if data["dosage"].value else ""
+            raw_time = data["time"].value.strip() if data["time"].value else ""
+            freq = data["freq"].value.strip() if data["freq"].value else ""
+            rec_val = data["recipient"].value
+
+            # If row is completely blank, skip it
+            if not name and not dosage and not raw_time and not freq:
+                row_num += 1
+                continue
+
+            if not name or not dosage or not raw_time or not freq:
+                batch_message.value = f"Row {row_num}: Please fill in name, dosage, time, and frequency."
+                batch_message.color = ft.Colors.RED_600
+                page.update()
+                return
+
+            normalized_time = normalize_time(raw_time)
+            if not normalized_time:
+                batch_message.value = f"Row {row_num} ('{name}'): Invalid time '{raw_time}'. Use e.g. 08:30 or 08:00, 20:00."
+                batch_message.color = ft.Colors.RED_600
+                page.update()
+                return
+
+            recipient_id = None if rec_val == "self" else int(rec_val)
+            to_insert.append((name, dosage, normalized_time, freq, recipient_id, None, None))
+            row_num += 1
+
+        if not to_insert:
+            batch_message.value = "Please enter at least one medication."
+            batch_message.color = ft.Colors.RED_600
+            page.update()
+            return
+
+        insert_medications_batch(current_user["id"], to_insert)
+        batch_message.value = f"Successfully added {len(to_insert)} medication{'s' if len(to_insert) != 1 else ''}!"
+        batch_message.color = ft.Colors.GREEN_700
+
+        # Reset batch rows with 2 fresh rows
+        batch_rows_column.controls.clear()
+        batch_rows_column.controls.append(create_batch_row())
+        batch_rows_column.controls.append(create_batch_row())
+
+        refresh_medications_list()
+        refresh_warnings_list()
+        page.update()
+
+    def switch_to_batch_mode(e):
+        if editing_medication_id["value"] is not None:
+            exit_edit_mode()
+        if len(batch_rows_column.controls) == 0:
+            batch_rows_column.controls.append(create_batch_row())
+            batch_rows_column.controls.append(create_batch_row())
+        batch_message.value = ""
+        single_med_container.visible = False
+        batch_med_container.visible = True
+        page.update()
+
+    def switch_to_single_mode(e):
+        med_message.value = ""
+        single_med_container.visible = True
+        batch_med_container.visible = False
+        page.update()
+
+    batch_switch_button = ft.TextButton("➕ Switch to Batch Add", on_click=switch_to_batch_mode)
+
+    def enter_recipient_edit_mode(recipient):
+        editing_recipient_id["value"] = recipient[0]
+        recipient_name_field.value = recipient[2]
+        recipient_relationship_field.value = recipient[3]
+        recipient_form_title.value = f"Editing: {recipient[2]}"
+        save_recipient_button.text = "Update Care Recipient"
+        cancel_recipient_edit_button.visible = True
+        recipient_message.value = ""
+        page.update()
+
+    def exit_recipient_edit_mode():
+        editing_recipient_id["value"] = None
+        recipient_name_field.value = ""
+        recipient_relationship_field.value = ""
+        recipient_form_title.value = "People You Care For"
+        save_recipient_button.text = "Add Care Recipient"
+        cancel_recipient_edit_button.visible = False
+        recipient_message.value = ""
+
+    def cancel_recipient_edit_clicked(e):
+        exit_recipient_edit_mode()
+        page.update()
+
+    def delete_recipient_clicked(recipient_id):
+        delete_care_recipient(recipient_id)
+        if editing_recipient_id["value"] == recipient_id:
+            exit_recipient_edit_mode()
+        refresh_care_recipients_list()
+        refresh_recipient_dropdown()
+        refresh_medications_list()
+        page.update()
+
+    def save_recipient_clicked(e):
         if current_user["id"] is None:
             recipient_message.value = "Please log in first."
             page.update()
             return
 
-        name = recipient_name_field.value
-        relationship = recipient_relationship_field.value
+        name = recipient_name_field.value.strip() if recipient_name_field.value else ""
+        relationship = recipient_relationship_field.value.strip() if recipient_relationship_field.value else ""
 
         if not name or not relationship:
             recipient_message.value = "Please enter both name and relationship."
             page.update()
             return
 
-        insert_care_recipient(current_user["id"], name, relationship)
-        recipient_message.value = f"Added {name} as a care recipient."
-        recipient_name_field.value = ""
-        recipient_relationship_field.value = ""
+        if editing_recipient_id["value"] is None:
+            insert_care_recipient(current_user["id"], name, relationship)
+            recipient_message.value = f"Added {name} as a care recipient."
+            recipient_name_field.value = ""
+            recipient_relationship_field.value = ""
+        else:
+            update_care_recipient(editing_recipient_id["value"], name, relationship)
+            recipient_message.value = f"Updated {name}."
+            exit_recipient_edit_mode()
+
         refresh_care_recipients_list()
         refresh_recipient_dropdown()
+        refresh_medications_list()
         page.update()
 
+    save_recipient_button.on_click = save_recipient_clicked
+    cancel_recipient_edit_button.on_click = cancel_recipient_edit_clicked
+
+    def refresh_care_recipients_list():
+        care_recipients_list.controls.clear()
+        if current_user["id"] is None:
+            return
+        recipients = get_care_recipients_for_caregiver(current_user["id"])
+        if not recipients:
+            care_recipients_list.controls.append(
+                ft.Text("No care recipients added yet.", size=12, color=ft.Colors.GREY_600)
+            )
+            return
+
+        for recipient in recipients:
+            rec_id = recipient[0]
+            rec_name = recipient[2]
+            rec_rel = recipient[3]
+
+            edit_rec_btn = ft.IconButton(
+                icon=ft.Icons.EDIT_OUTLINED,
+                icon_color=ft.Colors.GREY_500,
+                tooltip="Edit recipient",
+                on_click=lambda e, r=recipient: enter_recipient_edit_mode(r),
+            )
+            delete_rec_btn = ft.IconButton(
+                icon=ft.Icons.DELETE_OUTLINE,
+                icon_color=ft.Colors.RED_400,
+                tooltip="Delete recipient",
+                on_click=lambda e, rid=rec_id: delete_recipient_clicked(rid),
+            )
+
+            rec_card = ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text("👤", size=18),
+                        ft.Column(
+                            [
+                                ft.Text(rec_name, size=14, weight=ft.FontWeight.W_500),
+                                ft.Text(rec_rel, size=12, color=ft.Colors.GREY_600),
+                            ],
+                            spacing=2,
+                            expand=True,
+                        ),
+                        edit_rec_btn,
+                        delete_rec_btn,
+                    ],
+                    alignment=ft.MainAxisAlignment.START,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                bgcolor=ft.Colors.WHITE,
+                border=ft.Border.all(1, ft.Colors.GREY_300),
+                border_radius=10,
+                padding=12,
+                margin=ft.Margin.only(bottom=8),
+            )
+            care_recipients_list.controls.append(rec_card)
+
     def enter_edit_mode(med):
+        switch_to_single_mode(None)
+        batch_switch_button.visible = False
         editing_medication_id["value"] = med[0]
         med_name_field.value = med[2]
         med_dosage_field.value = med[3]
-        med_time_field.value = med[4]
+        med_time_field.value = normalize_time(med[4]) or med[4]
         med_frequency_field.value = med[5]
         med_form_title.value = f"Editing: {med[2]}"
         save_medication_button.text = "Update Medication"
@@ -190,6 +495,7 @@ def main(page: ft.Page):
         med_form_title.value = "Add Medication"
         save_medication_button.text = "Add Medication"
         cancel_edit_button.visible = False
+        batch_switch_button.visible = True
         recipient_dropdown.value = "self"
         more_options_container.visible = False
         more_options_toggle.text = "More options ▾"
@@ -213,27 +519,47 @@ def main(page: ft.Page):
         meds = get_medications_for_user(current_user["id"])
         for med in meds:
             med_id = med[0]
-            for_text = f" for {med[8]}" if med[8] else " for myself"
-            time_text = f"{med[4]}{for_text}"
+            recipient_name = med[8]
+
+            if recipient_name:
+                recipient_badge = ft.Container(
+                    content=ft.Text(f"👤 {recipient_name}", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.BLUE_900),
+                    bgcolor=ft.Colors.BLUE_50,
+                    border=ft.Border.all(1, ft.Colors.BLUE_200),
+                    border_radius=6,
+                    padding=ft.Padding(left=6, right=6, top=1, bottom=1),
+                )
+            else:
+                recipient_badge = ft.Container(
+                    content=ft.Text("👤 Myself", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_700),
+                    bgcolor=ft.Colors.GREY_100,
+                    border=ft.Border.all(1, ft.Colors.GREY_300),
+                    border_radius=6,
+                    padding=ft.Padding(left=6, right=6, top=1, bottom=1),
+                )
 
             take_button = ft.IconButton(
                 icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
                 icon_color=ft.Colors.GREEN_600,
+                tooltip="Mark as taken",
                 on_click=lambda e, mid=med_id: mark_dose(mid, "taken"),
             )
             skip_button = ft.IconButton(
                 icon=ft.Icons.CANCEL_OUTLINED,
                 icon_color=ft.Colors.GREY_500,
+                tooltip="Mark as skipped",
                 on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"),
             )
             edit_button = ft.IconButton(
                 icon=ft.Icons.EDIT_OUTLINED,
                 icon_color=ft.Colors.GREY_500,
+                tooltip="Edit medication",
                 on_click=lambda e, m=med: enter_edit_mode(m),
             )
             delete_button = ft.IconButton(
                 icon=ft.Icons.DELETE_OUTLINE,
                 icon_color=ft.Colors.RED_400,
+                tooltip="Delete medication",
                 on_click=lambda e, mid=med_id: delete_clicked(mid),
             )
 
@@ -243,10 +569,17 @@ def main(page: ft.Page):
                         ft.Text("💊", size=18),
                         ft.Column(
                             [
-                                ft.Text(f"{med[2]} · {med[3]}", size=14, weight=ft.FontWeight.W_500),
-                                ft.Text(time_text, size=12, color=ft.Colors.GREY_600),
+                                ft.Row(
+                                    [
+                                        ft.Text(f"{med[2]} · {med[3]}", size=14, weight=ft.FontWeight.W_500),
+                                        recipient_badge,
+                                    ],
+                                    spacing=6,
+                                    wrap=True,
+                                ),
+                                ft.Text(f"⏰ {med[4]} ({med[5]})", size=12, color=ft.Colors.GREY_600),
                             ],
-                            spacing=2,
+                            spacing=3,
                             expand=True,
                         ),
                         take_button,
@@ -322,11 +655,17 @@ def main(page: ft.Page):
 
         name = med_name_field.value
         dosage = med_dosage_field.value
-        time = med_time_field.value
+        raw_time = med_time_field.value
         frequency = med_frequency_field.value
 
-        if not name or not dosage or not time or not frequency:
+        if not name or not dosage or not raw_time or not frequency:
             med_message.value = "Please fill in all medication fields."
+            page.update()
+            return
+
+        time = normalize_time(raw_time)
+        if not time:
+            med_message.value = "Invalid time format. Please use e.g. 08:30 or 2:30 PM."
             page.update()
             return
 
@@ -352,6 +691,60 @@ def main(page: ft.Page):
 
     save_medication_button.on_click = save_medication_clicked
     cancel_edit_button.on_click = cancel_edit_clicked
+
+    single_med_container = ft.Container(
+        content=ft.Column(
+            [
+                ft.Row([med_form_title, batch_switch_button], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                med_name_field, med_dosage_field, med_time_field, med_frequency_field,
+                recipient_dropdown,
+                more_options_toggle,
+                more_options_container,
+                ft.Row([save_medication_button, cancel_edit_button]),
+                med_message,
+            ],
+            spacing=10,
+        ),
+        bgcolor=ft.Colors.WHITE,
+        border=ft.Border.all(1, ft.Colors.GREY_300),
+        border_radius=12,
+        padding=16,
+    )
+
+    batch_med_container = ft.Container(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("Batch Add Medications", weight=ft.FontWeight.BOLD, size=16),
+                                ft.Text("Add multiple drugs at once. Times can be e.g. 08:00, 20:00", size=12, color=ft.Colors.GREY_600),
+                            ],
+                            spacing=2,
+                        ),
+                        ft.TextButton("Single Add Mode", on_click=switch_to_single_mode),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                batch_rows_column,
+                ft.Row(
+                    [
+                        ft.Button("+ Add Another Drug", icon=ft.Icons.ADD, on_click=add_batch_row_clicked),
+                        ft.Button("Save All Medications", icon=ft.Icons.CHECK, on_click=save_batch_clicked),
+                    ],
+                    spacing=10,
+                ),
+                batch_message,
+            ],
+            spacing=12,
+        ),
+        bgcolor=ft.Colors.WHITE,
+        border=ft.Border.all(1, ft.Colors.GREY_300),
+        border_radius=12,
+        padding=16,
+        visible=False,
+    )
 
     name_field = ft.TextField(label="Name")
     email_field = ft.TextField(label="Email")
@@ -403,6 +796,7 @@ def main(page: ft.Page):
         current_user["name"] = None
         current_user["email"] = None
         exit_edit_mode()
+        exit_recipient_edit_mode()
         asyncio.create_task(page.push_route("/"))
 
     def route_change(e):
@@ -447,24 +841,8 @@ def main(page: ft.Page):
                         ft.Text("Warnings", weight=ft.FontWeight.BOLD),
                         warnings_list,
                         ft.Divider(),
-                        ft.Container(
-                            content=ft.Column(
-                                [
-                                    med_form_title,
-                                    med_name_field, med_dosage_field, med_time_field, med_frequency_field,
-                                    recipient_dropdown,
-                                    more_options_toggle,
-                                    more_options_container,
-                                    ft.Row([save_medication_button, cancel_edit_button]),
-                                    med_message,
-                                ],
-                                spacing=10,
-                            ),
-                            bgcolor=ft.Colors.WHITE,
-                            border=ft.Border.all(1, ft.Colors.GREY_300),
-                            border_radius=12,
-                            padding=16,
-                        ),
+                        single_med_container,
+                        batch_med_container,
                         ft.Divider(),
                         ft.Text("My Medications", weight=ft.FontWeight.BOLD),
                         medications_list,
@@ -473,10 +851,22 @@ def main(page: ft.Page):
                         adherence_text,
                         dose_history_list,
                         ft.Divider(),
-                        ft.Text("People You Care For", weight=ft.FontWeight.BOLD),
-                        recipient_name_field, recipient_relationship_field,
-                        ft.Button("Add Care Recipient", on_click=add_recipient_clicked),
-                        recipient_message,
+                        ft.Container(
+                            content=ft.Column(
+                                [
+                                    recipient_form_title,
+                                    recipient_name_field,
+                                    recipient_relationship_field,
+                                    ft.Row([save_recipient_button, cancel_recipient_edit_button]),
+                                    recipient_message,
+                                ],
+                                spacing=10,
+                            ),
+                            bgcolor=ft.Colors.WHITE,
+                            border=ft.Border.all(1, ft.Colors.GREY_300),
+                            border_radius=12,
+                            padding=16,
+                        ),
                         care_recipients_list,
                     ],
                     scroll=ft.ScrollMode.AUTO,

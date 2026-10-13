@@ -160,6 +160,27 @@ def insert_medication(user_id, name, dosage, time, frequency, recipient_id=None,
     conn.commit()
     conn.close()
 
+def insert_medications_batch(user_id, medications):
+    """
+    Inserts multiple medications in a single atomic transaction.
+    Each item in medications is a tuple:
+    (name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.executemany(
+        """
+        INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (user_id, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+            for m in medications
+        ]
+    )
+    conn.commit()
+    conn.close()
+
 def get_medications_for_user(user_id):
     conn = get_connection()
     cursor = conn.cursor()
@@ -248,3 +269,27 @@ def get_care_recipients_for_caregiver(caregiver_user_id):
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def update_care_recipient(recipient_id, name, relationship):
+    """Updates an existing care recipient's name and relationship."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE care_recipients SET name = ?, relationship = ? WHERE id = ?",
+        (name, relationship, recipient_id)
+    )
+    conn.commit()
+    conn.close()
+
+def delete_care_recipient(recipient_id):
+    """
+    Deletes a care recipient safely.
+    First unlinks any medications associated with this recipient (sets recipient_id to NULL),
+    preventing orphaned references, then deletes the recipient record.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE medications SET recipient_id = NULL WHERE recipient_id = ?", (recipient_id,))
+    cursor.execute("DELETE FROM care_recipients WHERE id = ?", (recipient_id,))
+    conn.commit()
+    conn.close()

@@ -68,6 +68,57 @@ class TestDatabase(unittest.TestCase):
         meds = database.get_medications_for_user(user_id)
         self.assertEqual(meds[0][9], 9)
 
+    def test_insert_medications_batch(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        batch = [
+            ("Amlodipine", "5mg", "08:00", "daily", None, 30, None),
+            ("Metformin", "500mg", "08:00, 20:00", "twice daily", None, 60, None),
+        ]
+        database.insert_medications_batch(user_id, batch)
+        meds = database.get_medications_for_user(user_id)
+        self.assertEqual(len(meds), 2)
+        names = [m[2] for m in meds]
+        self.assertIn("Amlodipine", names)
+        self.assertIn("Metformin", names)
+
+    def test_update_care_recipient(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        database.insert_care_recipient(user_id, "Mothe", "Mothe")
+        recipients = database.get_care_recipients_for_caregiver(user_id)
+        rec_id = recipients[0][0]
+
+        database.update_care_recipient(rec_id, "Mother", "Mother")
+        updated = database.get_care_recipients_for_caregiver(user_id)
+        self.assertEqual(updated[0][2], "Mother")
+        self.assertEqual(updated[0][3], "Mother")
+
+    def test_delete_care_recipient_unlinks_medications(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        database.insert_care_recipient(user_id, "Mother", "Mother")
+        recipients = database.get_care_recipients_for_caregiver(user_id)
+        rec_id = recipients[0][0]
+
+        database.insert_medication(user_id, "Panadol", "500mg", "08:00", "daily", recipient_id=rec_id)
+        meds = database.get_medications_for_user(user_id)
+        self.assertEqual(meds[0][7], rec_id)
+
+        database.delete_care_recipient(rec_id)
+        remaining_recipients = database.get_care_recipients_for_caregiver(user_id)
+        self.assertEqual(len(remaining_recipients), 0)
+
+        # Medication should still exist, but recipient_id is now None
+        meds_after = database.get_medications_for_user(user_id)
+        self.assertEqual(len(meds_after), 1)
+        self.assertIsNone(meds_after[0][7])
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 meditrack.db
 test_meditrack.db
+build/
+dist/
+*.zip
+*.spec
