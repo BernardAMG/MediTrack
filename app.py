@@ -14,7 +14,7 @@ from database import (
     insert_medication, insert_medications_batch, get_medications_for_user,
     insert_dose_record, get_dose_history_for_user,
     export_adherence_to_csv, get_adherence_report_data,
-    update_medication, delete_medication, decrement_quantity,
+    update_medication, delete_medication, decrement_quantity, refill_medication,
     insert_care_recipient, update_care_recipient, delete_care_recipient, get_care_recipients_for_caregiver
 )
 
@@ -154,6 +154,8 @@ def main(page: ft.Page):
     watcher_thread.start()
 
     medications_list = ft.Column()
+    selected_recipient_filter = {"value": "all"}
+    recipient_filter_row = ft.Row(scroll=ft.ScrollMode.AUTO, wrap=False)
     dose_history_list = ft.Column()
     warnings_list = ft.Column()
     adherence_text = ft.Text(value="")
@@ -577,12 +579,108 @@ def main(page: ft.Page):
         refresh_warnings_list()
         page.update()
 
+    def refill_clicked(med_id, med_name, current_qty):
+        refill_qty_field = ft.TextField(
+            label="Quantity to add",
+            value="30",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            width=140
+        )
+        error_msg = ft.Text(value="", size=12, color=ft.Colors.RED_500)
+
+        def confirm_refill(e):
+            val = refill_qty_field.value.strip()
+            if not val.isdigit() or int(val) <= 0:
+                error_msg.value = "Enter a valid positive number"
+                page.update()
+                return
+            refill_medication(med_id, int(val))
+            refresh_medications_list()
+            refresh_warnings_list()
+            page.pop_dialog()
+            page.update()
+
+        def cancel_refill(e):
+            page.pop_dialog()
+            page.update()
+
+        curr_text = f"{current_qty} pills remaining" if current_qty is not None else "Stock not tracked"
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"Refill {med_name}"),
+            content=ft.Column(
+                [
+                    ft.Text(f"Current stock: {curr_text}"),
+                    refill_qty_field,
+                    error_msg,
+                ],
+                tight=True,
+                spacing=8
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=cancel_refill),
+                ft.Button("Refill", on_click=confirm_refill),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg)
+        page.update()
+
+    def set_recipient_filter(val):
+        selected_recipient_filter["value"] = val
+        refresh_medications_list()
+        page.update()
+
     def refresh_medications_list():
         medications_list.controls.clear()
+        recipient_filter_row.controls.clear()
         if current_user["id"] is None:
             return
+
+        # Build filter chips
+        recipients = get_care_recipients_for_caregiver(current_user["id"])
+        filter_options = [("all", "All"), ("self", "Myself")]
+        for r in recipients:
+            filter_options.append((str(r[0]), r[2]))
+
+        for f_val, f_label in filter_options:
+            is_selected = selected_recipient_filter["value"] == f_val
+            chip = ft.Container(
+                content=ft.Text(
+                    f_label,
+                    size=12,
+                    weight=ft.FontWeight.W_600 if is_selected else ft.FontWeight.NORMAL,
+                    color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_800,
+                ),
+                bgcolor=ft.Colors.BLUE_600 if is_selected else ft.Colors.GREY_200,
+                border_radius=16,
+                padding=ft.Padding(left=12, right=12, top=6, bottom=6),
+                on_click=lambda e, val=f_val: set_recipient_filter(val),
+            )
+            recipient_filter_row.controls.append(chip)
+
         meds = get_medications_for_user(current_user["id"])
+
+        # Filter medications based on active chip
+        filtered_meds = []
         for med in meds:
+            rec_id = med[7]
+            if selected_recipient_filter["value"] == "all":
+                filtered_meds.append(med)
+            elif selected_recipient_filter["value"] == "self" and rec_id is None:
+                filtered_meds.append(med)
+            elif str(rec_id) == str(selected_recipient_filter["value"]):
+                filtered_meds.append(med)
+
+        if not filtered_meds:
+            medications_list.controls.append(
+                ft.Container(
+                    content=ft.Text("No medications match this filter.", size=13, italic=True, color=ft.Colors.GREY_500),
+                    padding=10,
+                )
+            )
+            return
+
+        for med in filtered_meds:
             med_id = med[0]
             recipient_name = med[8]
 
@@ -615,6 +713,12 @@ def main(page: ft.Page):
                 tooltip="Mark as skipped",
                 on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"),
             )
+            refill_button = ft.IconButton(
+                icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED,
+                icon_color=ft.Colors.BLUE_600,
+                tooltip="Refill stock",
+                on_click=lambda e, mid=med_id, mname=med[2], mqty=med[9]: refill_clicked(mid, mname, mqty),
+            )
             edit_button = ft.IconButton(
                 icon=ft.Icons.EDIT_OUTLINED,
                 icon_color=ft.Colors.GREY_500,
@@ -627,6 +731,9 @@ def main(page: ft.Page):
                 tooltip="Delete medication",
                 on_click=lambda e, mid=med_id: delete_clicked(mid),
             )
+
+            stock_info = f" · 📦 {med[9]} left" if med[9] is not None else ""
+            expiry_info = f" · ⌛ Exp: {med[10]}" if med[10] else ""
 
             card = ft.Container(
                 content=ft.Row(
@@ -642,13 +749,14 @@ def main(page: ft.Page):
                                     spacing=6,
                                     wrap=True,
                                 ),
-                                ft.Text(f"⏰ {med[4]} ({med[5]})", size=12, color=ft.Colors.GREY_600),
+                                ft.Text(f"⏰ {med[4]} ({med[5]}){stock_info}{expiry_info}", size=12, color=ft.Colors.GREY_600),
                             ],
                             spacing=3,
                             expand=True,
                         ),
                         take_button,
                         skip_button,
+                        refill_button,
                         edit_button,
                         delete_button,
                     ],
@@ -910,6 +1018,7 @@ def main(page: ft.Page):
                         batch_med_container,
                         ft.Divider(),
                         ft.Text("My Medications", weight=ft.FontWeight.BOLD),
+                        recipient_filter_row,
                         medications_list,
                         ft.Divider(),
                         ft.Row(

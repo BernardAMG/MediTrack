@@ -334,6 +334,23 @@ def decrement_quantity(medication_id):
     conn.commit()
     conn.close()
 
+def refill_medication(medication_id, added_quantity):
+    """Adds added_quantity to medication's quantity_remaining."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE medications
+            SET quantity_remaining = COALESCE(quantity_remaining, 0) + ?
+            WHERE id = ?
+            """,
+            (added_quantity, medication_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
 def insert_dose_record(medication_id, status, schedule_id=None):
     conn = get_connection()
     try:

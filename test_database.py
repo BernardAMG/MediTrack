@@ -273,5 +273,22 @@ class TestDatabase(unittest.TestCase):
         self.assertFalse(should_alert("", dt_exact))
         self.assertFalse(should_alert("invalid", dt_exact))
 
+    def test_refill_medication_increments_stock(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        med_id = database.insert_medication(user_id, "Metformin", "500mg", "08:00", "daily", quantity_remaining=10)
+        database.refill_medication(med_id, 30)
+        meds = database.get_medications_for_user(user_id)
+        self.assertEqual(meds[0][9], 40)
+
+        # Refill on medication with initially None stock
+        med_id2 = database.insert_medication(user_id, "Aspirin", "100mg", "08:00", "daily", quantity_remaining=None)
+        database.refill_medication(med_id2, 50)
+        meds2 = database.get_medications_for_user(user_id)
+        aspirin = next(m for m in meds2 if m[0] == med_id2)
+        self.assertEqual(aspirin[9], 50)
+
 if __name__ == "__main__":
     unittest.main()
