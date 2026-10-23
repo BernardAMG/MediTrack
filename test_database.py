@@ -1,6 +1,9 @@
 import unittest
 import os
+import csv
+from datetime import datetime
 import database
+from app import should_alert
 
 TEST_DB = "test_meditrack.db"
 
@@ -10,9 +13,13 @@ class TestDatabase(unittest.TestCase):
         database.DATABASE_FILE = TEST_DB
         database.create_users_table()
         database.create_medications_table()
+        database.create_dose_records_table()
         database.create_care_recipients_table()
         database.add_recipient_id_column()
         database.add_quantity_and_expiry_columns()
+        database.create_medication_schedules_table()
+        database.add_schedule_id_column_to_dose_records()
+        database.migrate_comma_times_to_schedules()
 
     def tearDown(self):
         """Runs after every single test method — cleans up the test database file."""
@@ -119,6 +126,152 @@ class TestDatabase(unittest.TestCase):
         meds_after = database.get_medications_for_user(user_id)
         self.assertEqual(len(meds_after), 1)
         self.assertIsNone(meds_after[0][7])
+
+    def test_insert_medication_creates_schedules(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        med_id = database.insert_medication(user_id, "Metformin", "500mg", "08:00, 14:00, 20:00", "3x daily")
+        schedules = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules), 3)
+        times = [s[2] for s in schedules]
+        self.assertEqual(times, ["08:00", "14:00", "20:00"])
+
+    def test_update_medication_updates_schedules(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        med_id = database.insert_medication(user_id, "Metformin", "500mg", "08:00, 20:00", "twice daily")
+        database.update_medication(med_id, "Metformin", "1000mg", "09:00", "once daily")
+        schedules = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules), 1)
+        self.assertEqual(schedules[0][2], "09:00")
+
+    def test_delete_medication_cascades_schedules(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        med_id = database.insert_medication(user_id, "Metformin", "500mg", "08:00, 20:00", "twice daily")
+        schedules = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules), 2)
+
+        database.delete_medication(med_id)
+        schedules_after = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules_after), 0)
+
+    def test_insert_dose_record_with_schedule(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        med_id = database.insert_medication(user_id, "Panadol", "500mg", "08:00", "daily")
+        schedules = database.get_schedules_for_medication(med_id)
+        sched_id = schedules[0][0]
+
+        database.insert_dose_record(med_id, "taken", sched_id)
+        history = database.get_dose_history_for_user(user_id)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0][0], "Panadol")
+        self.assertEqual(history[0][1], "taken")
+        self.assertEqual(history[0][3], "08:00")
+
+    def test_migrate_comma_times_to_schedules_idempotent(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        # Simulate legacy insert without schedules by deleting schedules table entries
+        med_id = database.insert_medication(user_id, "Aspirin", "100mg", "07:00, 19:00", "daily")
+        conn = database.get_connection()
+        conn.execute("DELETE FROM medication_schedules WHERE medication_id = ?", (med_id,))
+        conn.commit()
+        conn.close()
+
+        self.assertEqual(len(database.get_schedules_for_medication(med_id)), 0)
+
+        # Run migration
+        database.migrate_comma_times_to_schedules()
+        schedules = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules), 2)
+        times = [s[2] for s in schedules]
+        self.assertIn("07:00", times)
+        self.assertIn("19:00", times)
+
+        # Running again should not duplicate rows (idempotent)
+        database.migrate_comma_times_to_schedules()
+        schedules_again = database.get_schedules_for_medication(med_id)
+        self.assertEqual(len(schedules_again), 2)
+
+    def test_get_adherence_report_data_and_csv_export(self):
+        database.insert_user("Test User", "test@example.com", "fakehash")
+        user = database.get_user_by_email("test@example.com")
+        user_id = user[0]
+
+        database.insert_care_recipient(user_id, "Grandma", "Grandmother")
+        recipients = database.get_care_recipients_for_caregiver(user_id)
+        rec_id = recipients[0][0]
+
+        med_id = database.insert_medication(user_id, "Lisinopril", "10mg", "08:00", "daily", recipient_id=rec_id)
+        schedules = database.get_schedules_for_medication(med_id)
+        sched_id = schedules[0][0]
+
+        database.insert_dose_record(med_id, "taken", sched_id)
+        database.insert_dose_record(med_id, "skipped", sched_id)
+
+        report = database.get_adherence_report_data(user_id)
+        self.assertEqual(len(report), 2)
+        # Taken at, Name, Dosage, Scheduled Slot, Recipient Name, Status
+        self.assertEqual(report[0][1], "Lisinopril")
+        self.assertEqual(report[0][2], "10mg")
+        self.assertEqual(report[0][3], "08:00")
+        self.assertEqual(report[0][4], "Grandma")
+
+        # Test CSV generation
+        test_csv_path = "test_adherence_export.csv"
+        try:
+            success, path = database.export_adherence_to_csv(user_id, test_csv_path)
+            self.assertTrue(success)
+            self.assertTrue(os.path.exists(test_csv_path))
+
+            with open(test_csv_path, mode="r", encoding="utf-8") as f:
+                reader = list(csv.reader(f))
+                self.assertEqual(reader[0], ["Date & Time", "Medication", "Dosage", "Scheduled Slot", "Recipient", "Status"])
+                self.assertEqual(len(reader), 3)  # header + 2 records
+                self.assertEqual(reader[1][1], "Lisinopril")
+                self.assertEqual(reader[1][4], "Grandma")
+        finally:
+            if os.path.exists(test_csv_path):
+                os.remove(test_csv_path)
+
+    def test_should_alert_window_timing(self):
+        sched_time = "08:00"
+
+        # Exactly at scheduled time
+        dt_exact = datetime(2026, 10, 23, 8, 0, 0)
+        self.assertTrue(should_alert(sched_time, dt_exact, window_minutes=15))
+
+        # 5 minutes after scheduled time (within 15m window)
+        dt_5m_after = datetime(2026, 10, 23, 8, 5, 0)
+        self.assertTrue(should_alert(sched_time, dt_5m_after, window_minutes=15))
+
+        # Exactly 15 minutes after (edge of window)
+        dt_15m_after = datetime(2026, 10, 23, 8, 15, 0)
+        self.assertTrue(should_alert(sched_time, dt_15m_after, window_minutes=15))
+
+        # 16 minutes after scheduled time (past window)
+        dt_16m_after = datetime(2026, 10, 23, 8, 16, 0)
+        self.assertFalse(should_alert(sched_time, dt_16m_after, window_minutes=15))
+
+        # 1 minute before scheduled time (too early)
+        dt_1m_before = datetime(2026, 10, 23, 7, 59, 59)
+        self.assertFalse(should_alert(sched_time, dt_1m_before, window_minutes=15))
+
+        # Invalid strings
+        self.assertFalse(should_alert("", dt_exact))
+        self.assertFalse(should_alert("invalid", dt_exact))
 
 if __name__ == "__main__":
     unittest.main()

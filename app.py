@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 import threading
 from datetime import datetime, date, timedelta
@@ -7,9 +8,12 @@ import flet as ft
 from database import (
     create_users_table, create_medications_table, create_dose_records_table,
     create_care_recipients_table, add_recipient_id_column, add_quantity_and_expiry_columns,
+    create_medication_schedules_table, add_schedule_id_column_to_dose_records, migrate_comma_times_to_schedules,
+    get_schedules_for_medication, get_all_schedules_for_user,
     insert_user, hash_password, login_user, get_user_by_email,
     insert_medication, insert_medications_batch, get_medications_for_user,
     insert_dose_record, get_dose_history_for_user,
+    export_adherence_to_csv, get_adherence_report_data,
     update_medication, delete_medication, decrement_quantity,
     insert_care_recipient, update_care_recipient, delete_care_recipient, get_care_recipients_for_caregiver
 )
@@ -74,6 +78,30 @@ def normalize_time(time_str):
     sorted_unique = sorted(list(set(normalized_list)))
     return ", ".join(sorted_unique)
 
+def should_alert(scheduled_time_str, current_dt=None, window_minutes=15):
+    """
+    Returns True if current_dt is at or after scheduled_time today,
+    but within window_minutes after the scheduled time.
+    E.g., if scheduled for 08:00, triggers between 08:00 and 08:15.
+    Prevents missed alerts if machine was busy, sleeping, or locked during the exact minute.
+    """
+    if not scheduled_time_str:
+        return False
+    if current_dt is None:
+        current_dt = datetime.now()
+
+    parts = scheduled_time_str.split(":")
+    if len(parts) != 2:
+        return False
+    try:
+        sched_h, sched_m = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+
+    sched_dt = current_dt.replace(hour=sched_h, minute=sched_m, second=0, microsecond=0)
+    diff_seconds = (current_dt - sched_dt).total_seconds()
+    return 0 <= diff_seconds <= (window_minutes * 60)
+
 def main(page: ft.Page):
     page.title = "MediTrack"
     page.theme_mode = ft.ThemeMode.LIGHT
@@ -100,19 +128,23 @@ def main(page: ft.Page):
     def watcher_loop(stop_event):
         while not stop_event.is_set():
             if current_user["id"] is not None:
-                now_str = datetime.now().strftime("%H:%M")
+                now_dt = datetime.now()
+                now_str = now_dt.strftime("%H:%M")
                 today_str = date.today().isoformat()
                 meds = get_medications_for_user(current_user["id"])
                 print(f"[watcher] now={now_str}, checking {len(meds)} medication(s)...")
                 for med in meds:
-                    raw_times = med[4] or ""
-                    for item in re.split(r"[,;]+", raw_times):
-                        t = item.strip()
-                        if not t:
-                            continue
+                    med_id = med[0]
+                    # Query individual schedule slots from normalized table
+                    schedules = get_schedules_for_medication(med_id)
+                    slot_times = [s[2] for s in schedules] if schedules else []
+                    if not slot_times and med[4]:
+                        slot_times = [t.strip() for t in re.split(r"[,;]+", med[4]) if t.strip()]
+
+                    for t in slot_times:
                         normalized_t = _parse_single_time(t) or t
-                        key = (today_str, med[0], normalized_t)
-                        if normalized_t == now_str and key not in already_notified_today:
+                        key = (today_str, med_id, normalized_t)
+                        if should_alert(normalized_t, current_dt=now_dt, window_minutes=15) and key not in already_notified_today:
                             send_alert(med, scheduled_time=normalized_t)
                             already_notified_today.add(key)
             stop_event.wait(30)
@@ -132,8 +164,12 @@ def main(page: ft.Page):
             return
         history = get_dose_history_for_user(current_user["id"])
         for record in history:
-            med_name, status, taken_at = record
-            dose_history_list.controls.append(ft.Text(f"{taken_at} — {med_name}: {status}"))
+            med_name = record[0]
+            status = record[1]
+            taken_at = record[2]
+            sched_time = record[3] if len(record) > 3 and record[3] else None
+            slot_info = f" (slot: {sched_time})" if sched_time else ""
+            dose_history_list.controls.append(ft.Text(f"{taken_at} — {med_name}: {status}{slot_info}"))
 
     def refresh_adherence_stats():
         if current_user["id"] is None:
@@ -148,8 +184,8 @@ def main(page: ft.Page):
         percentage = round((taken_count / total) * 100)
         adherence_text.value = f"{percentage}% adherence ({taken_count} of {total} doses taken)"
 
-    def mark_dose(medication_id, status):
-        insert_dose_record(medication_id, status)
+    def mark_dose(medication_id, status, schedule_id=None):
+        insert_dose_record(medication_id, status, schedule_id)
         if status == "taken":
             decrement_quantity(medication_id)
         refresh_dose_history()
@@ -157,6 +193,35 @@ def main(page: ft.Page):
         refresh_medications_list()
         refresh_warnings_list()
         page.update()
+
+    csv_export_message = ft.Text(value="", size=12)
+
+    def export_csv_clicked(e):
+        if current_user["id"] is None:
+            csv_export_message.value = "Please log in first."
+            csv_export_message.color = ft.Colors.RED_500
+            page.update()
+            return
+
+        docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        os.makedirs(docs_dir, exist_ok=True)
+        filename = f"MediTrack_Adherence_{date.today().isoformat()}.csv"
+        target_path = os.path.join(docs_dir, filename)
+
+        success, result = export_adherence_to_csv(current_user["id"], target_path)
+        if success:
+            csv_export_message.value = f"✓ Exported to Documents/{filename}"
+            csv_export_message.color = ft.Colors.GREEN_700
+        else:
+            csv_export_message.value = f"Export failed: {result}"
+            csv_export_message.color = ft.Colors.RED_500
+        page.update()
+
+    export_csv_button = ft.Button(
+        "Export CSV",
+        icon=ft.Icons.DOWNLOAD,
+        on_click=export_csv_clicked
+    )
 
     care_recipients_list = ft.Column()
     recipient_name_field = ft.TextField(label="Recipient Name")
@@ -847,8 +912,15 @@ def main(page: ft.Page):
                         ft.Text("My Medications", weight=ft.FontWeight.BOLD),
                         medications_list,
                         ft.Divider(),
-                        ft.Text("Dose History", weight=ft.FontWeight.BOLD),
+                        ft.Row(
+                            [
+                                ft.Text("Dose History", weight=ft.FontWeight.BOLD, size=16),
+                                export_csv_button,
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
                         adherence_text,
+                        csv_export_message,
                         dose_history_list,
                         ft.Divider(),
                         ft.Container(
@@ -878,10 +950,14 @@ def main(page: ft.Page):
     page.on_route_change = route_change
     route_change(None)
 
-create_users_table()
-create_medications_table()
-create_dose_records_table()
-create_care_recipients_table()
-add_recipient_id_column()
-add_quantity_and_expiry_columns()
-ft.run(main)
+if __name__ == "__main__":
+    create_users_table()
+    create_medications_table()
+    create_dose_records_table()
+    create_care_recipients_table()
+    add_recipient_id_column()
+    add_quantity_and_expiry_columns()
+    create_medication_schedules_table()
+    add_schedule_id_column_to_dose_records()
+    migrate_comma_times_to_schedules()
+    ft.run(main)

@@ -1,5 +1,6 @@
 import sqlite3
 import bcrypt
+import csv
 
 def hash_password(plain_password):
     password_bytes = plain_password.encode("utf-8")
@@ -15,7 +16,9 @@ def check_password(plain_password, hashed_password):
 DATABASE_FILE = "meditrack.db"
 
 def get_connection():
-    return sqlite3.connect(DATABASE_FILE)
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 def create_users_table():
     conn = get_connection()
@@ -105,6 +108,58 @@ def add_quantity_and_expiry_columns():
     conn.commit()
     conn.close()
 
+def create_medication_schedules_table():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS medication_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            medication_id INTEGER NOT NULL,
+            time TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (medication_id) REFERENCES medications (id) ON DELETE CASCADE
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def add_schedule_id_column_to_dose_records():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE dose_records ADD COLUMN schedule_id INTEGER REFERENCES medication_schedules (id) ON DELETE SET NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    conn.close()
+
+def migrate_comma_times_to_schedules():
+    """
+    Idempotent migration: Reads all existing medications and populates
+    medication_schedules for any comma-separated (or single) times not yet migrated.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, time FROM medications")
+    meds = cursor.fetchall()
+
+    for med_id, raw_time in meds:
+        if not raw_time:
+            continue
+        items = [t.strip() for t in raw_time.replace(";", ",").split(",") if t.strip()]
+        for t in items:
+            cursor.execute(
+                "SELECT id FROM medication_schedules WHERE medication_id = ? AND time = ?",
+                (med_id, t)
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    "INSERT INTO medication_schedules (medication_id, time) VALUES (?, ?)",
+                    (med_id, t)
+                )
+    conn.commit()
+    conn.close()
+
 def insert_user(name, email, password_hash):
     conn = get_connection()
     cursor = conn.cursor()
@@ -149,16 +204,26 @@ def login_user(email, password):
 
 def insert_medication(user_id, name, dosage, time, frequency, recipient_id=None, quantity_remaining=None, expiry_date=None):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+        )
+        medication_id = cursor.lastrowid
+        if time:
+            for t in [x.strip() for x in time.replace(";", ",").split(",") if x.strip()]:
+                cursor.execute(
+                    "INSERT INTO medication_schedules (medication_id, time) VALUES (?, ?)",
+                    (medication_id, t)
+                )
+        conn.commit()
+        return medication_id
+    finally:
+        conn.close()
 
 def insert_medications_batch(user_id, medications):
     """
@@ -167,19 +232,27 @@ def insert_medications_batch(user_id, medications):
     (name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
     """
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.executemany(
-        """
-        INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (user_id, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
-            for m in medications
-        ]
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        for m in medications:
+            cursor.execute(
+                """
+                INSERT INTO medications (user_id, name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+            )
+            med_id = cursor.lastrowid
+            raw_time = m[2]
+            if raw_time:
+                for t in [x.strip() for x in raw_time.replace(";", ",").split(",") if x.strip()]:
+                    cursor.execute(
+                        "INSERT INTO medication_schedules (medication_id, time) VALUES (?, ?)",
+                        (med_id, t)
+                    )
+        conn.commit()
+    finally:
+        conn.close()
 
 def get_medications_for_user(user_id):
     conn = get_connection()
@@ -197,6 +270,30 @@ def get_medications_for_user(user_id):
     conn.close()
     return rows
 
+def get_schedules_for_medication(medication_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, medication_id, time FROM medication_schedules WHERE medication_id = ? ORDER BY time", (medication_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_all_schedules_for_user(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT medication_schedules.id, medication_schedules.medication_id, medication_schedules.time,
+               medications.name, medications.dosage, medications.recipient_id, care_recipients.name
+        FROM medication_schedules
+        JOIN medications ON medication_schedules.medication_id = medications.id
+        LEFT JOIN care_recipients ON medications.recipient_id = care_recipients.id
+        WHERE medications.user_id = ?
+        ORDER BY medication_schedules.time
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 def update_medication(medication_id, name, dosage, time, frequency, recipient_id=None, quantity_remaining=None, expiry_date=None):
     conn = get_connection()
     cursor = conn.cursor()
@@ -208,12 +305,21 @@ def update_medication(medication_id, name, dosage, time, frequency, recipient_id
         """,
         (name, dosage, time, frequency, recipient_id, quantity_remaining, expiry_date, medication_id)
     )
+    cursor.execute("DELETE FROM medication_schedules WHERE medication_id = ?", (medication_id,))
+    if time:
+        for t in [x.strip() for x in time.replace(";", ",").split(",") if x.strip()]:
+            cursor.execute(
+                "INSERT INTO medication_schedules (medication_id, time) VALUES (?, ?)",
+                (medication_id, t)
+            )
     conn.commit()
     conn.close()
 
 def delete_medication(medication_id):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("DELETE FROM dose_records WHERE medication_id = ?", (medication_id,))
+    cursor.execute("DELETE FROM medication_schedules WHERE medication_id = ?", (medication_id,))
     cursor.execute("DELETE FROM medications WHERE id = ?", (medication_id,))
     conn.commit()
     conn.close()
@@ -228,29 +334,76 @@ def decrement_quantity(medication_id):
     conn.commit()
     conn.close()
 
-def insert_dose_record(medication_id, status):
+def insert_dose_record(medication_id, status, schedule_id=None):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO dose_records (medication_id, status) VALUES (?, ?)",
-        (medication_id, status)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO dose_records (medication_id, status, schedule_id) VALUES (?, ?, ?)",
+            (medication_id, status, schedule_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 def get_dose_history_for_user(user_id):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT medications.name, dose_records.status, dose_records.taken_at
-        FROM dose_records
-        JOIN medications ON dose_records.medication_id = medications.id
-        WHERE medications.user_id = ?
-        ORDER BY dose_records.taken_at DESC
-    """, (user_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT medications.name, dose_records.status, dose_records.taken_at, medication_schedules.time
+            FROM dose_records
+            JOIN medications ON dose_records.medication_id = medications.id
+            LEFT JOIN medication_schedules ON dose_records.schedule_id = medication_schedules.id
+            WHERE medications.user_id = ?
+            ORDER BY dose_records.taken_at DESC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        return rows
+    finally:
+        conn.close()
+
+def get_adherence_report_data(user_id):
+    """
+    Retrieves full adherence report data for a user including medication details,
+    scheduled slot, caregiver recipient, taken timestamp, and status.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT dose_records.taken_at,
+                   medications.name,
+                   medications.dosage,
+                   COALESCE(medication_schedules.time, 'N/A') AS scheduled_time,
+                   COALESCE(care_recipients.name, 'Myself') AS recipient_name,
+                   dose_records.status
+            FROM dose_records
+            JOIN medications ON dose_records.medication_id = medications.id
+            LEFT JOIN medication_schedules ON dose_records.schedule_id = medication_schedules.id
+            LEFT JOIN care_recipients ON medications.recipient_id = care_recipients.id
+            WHERE medications.user_id = ?
+            ORDER BY dose_records.taken_at DESC
+        """, (user_id,))
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def export_adherence_to_csv(user_id, output_path):
+    """
+    Exports the user's adherence records to a CSV file.
+    Returns (True, output_path) on success, or (False, error_message) on failure.
+    """
+    try:
+        rows = get_adherence_report_data(user_id)
+        with open(output_path, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Date & Time", "Medication", "Dosage", "Scheduled Slot", "Recipient", "Status"])
+            for r in rows:
+                writer.writerow(r)
+        return True, output_path
+    except Exception as e:
+        return False, str(e)
 
 def insert_care_recipient(caregiver_user_id, name, relationship):
     conn = get_connection()

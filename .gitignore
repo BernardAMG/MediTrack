@@ -7,3 +7,4 @@ build/
 dist/
 *.zip
 *.spec
+notify_test*.py
