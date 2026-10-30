@@ -1,6 +1,81 @@
 import sqlite3
 import bcrypt
 import csv
+import os
+import shutil
+from datetime import datetime
+from config import (
+    APP_DATA_DIR as CONFIG_APP_DATA_DIR,
+    DATABASE_FILE as CONFIG_DATABASE_FILE,
+    LEGACY_DATABASE_FILE as CONFIG_LEGACY_DATABASE_FILE,
+    BACKUP_FILE as CONFIG_BACKUP_FILE,
+    BACKUP_DIR as CONFIG_BACKUP_DIR,
+    logger
+)
+
+APP_DATA_DIR = CONFIG_APP_DATA_DIR
+DATABASE_FILE = CONFIG_DATABASE_FILE
+LEGACY_DATABASE_FILE = CONFIG_LEGACY_DATABASE_FILE
+BACKUP_FILE = CONFIG_BACKUP_FILE
+BACKUP_DIR = CONFIG_BACKUP_DIR
+
+def prepare_database_location():
+    """Run once at app startup, before any create/migrate calls."""
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    # One-time move for people upgrading from the old relative-path version
+    if os.path.exists(LEGACY_DATABASE_FILE) and not os.path.exists(DATABASE_FILE):
+        shutil.copy2(LEGACY_DATABASE_FILE, DATABASE_FILE)
+        logger.info(f"Migrated legacy database from {LEGACY_DATABASE_FILE} to {DATABASE_FILE}")
+
+    # Keep a safety copy of the pre-migration data (only the first time)
+    if os.path.exists(DATABASE_FILE) and not os.path.exists(BACKUP_FILE):
+        shutil.copy2(DATABASE_FILE, BACKUP_FILE)
+        logger.info(f"Created pre-migration safety backup at {BACKUP_FILE}")
+
+def create_database_backup(tag=None):
+    """
+    Creates a timestamped snapshot of the active database in the backups directory.
+    Returns the absolute path to the backup file, or None if no DB exists yet.
+    """
+    if not os.path.exists(DATABASE_FILE):
+        return None
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = f"_{tag}" if tag else ""
+    filename = f"meditrack_backup_{timestamp}{suffix}.db"
+    dest = os.path.join(BACKUP_DIR, filename)
+    shutil.copy2(DATABASE_FILE, dest)
+    logger.info(f"Created database snapshot at {dest}")
+    return dest
+
+def check_database_integrity():
+    """
+    Runs SQLite integrity check.
+    Returns (True, ['ok']) if healthy, or (False, [error_strings]) if issues detected.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check")
+        rows = [r[0] for r in cursor.fetchall()]
+        is_ok = (len(rows) == 1 and rows[0].lower() == "ok")
+        return is_ok, rows
+    finally:
+        conn.close()
+
+def vacuum_database():
+    """
+    Executes VACUUM to reclaim free space, defragment pages, and optimize indices.
+    """
+    conn = get_connection()
+    try:
+        conn.execute("VACUUM")
+        logger.info("Database vacuumed and optimized successfully.")
+        return True
+    finally:
+        conn.close()
 
 def hash_password(plain_password):
     password_bytes = plain_password.encode("utf-8")
@@ -12,8 +87,6 @@ def check_password(plain_password, hashed_password):
         plain_password.encode("utf-8"),
         hashed_password.encode("utf-8")
     )
-
-DATABASE_FILE = "meditrack.db"
 
 def get_connection():
     conn = sqlite3.connect(DATABASE_FILE)
@@ -159,6 +232,77 @@ def migrate_comma_times_to_schedules():
                 )
     conn.commit()
     conn.close()
+
+def init_schema_migrations_table():
+    """Initializes the version tracking table for database schema migrations."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_applied_migrations():
+    """Returns a set of all integer version numbers that have been applied."""
+    init_schema_migrations_table()
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version FROM schema_migrations")
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+def record_migration(version, name):
+    """Records that a migration step has completed successfully."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, ?)",
+            (version, name)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def run_all_migrations():
+    """
+    Unified entry point for database setup and sequential schema migrations.
+    Safely executes pending migrations and marks them in schema_migrations.
+    """
+    applied = get_applied_migrations()
+
+    # Step 1: Base Relational Schema
+    if 1 not in applied:
+        create_users_table()
+        create_medications_table()
+        create_dose_records_table()
+        create_care_recipients_table()
+        record_migration(1, "create_base_tables")
+        logger.info("Applied migration 1: create_base_tables")
+
+    # Step 2: Inventory & Expiry Columns
+    if 2 not in applied:
+        add_recipient_id_column()
+        add_quantity_and_expiry_columns()
+        record_migration(2, "add_recipient_and_stock_columns")
+        logger.info("Applied migration 2: add_recipient_and_stock_columns")
+
+    # Step 3: 1NF Medication Schedules & Dose Slot Linking
+    if 3 not in applied:
+        create_medication_schedules_table()
+        add_schedule_id_column_to_dose_records()
+        migrate_comma_times_to_schedules()
+        record_migration(3, "normalize_schedules_table_1nf")
+        logger.info("Applied migration 3: normalize_schedules_table_1nf")
 
 def insert_user(name, email, password_hash):
     conn = get_connection()

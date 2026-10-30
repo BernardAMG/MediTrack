@@ -5,7 +5,9 @@ import threading
 from datetime import datetime, date, timedelta
 from win11toast import notify as win_notify
 import flet as ft
+from config import APP_VERSION, LOW_STOCK_THRESHOLD, EXPIRY_WARNING_DAYS, logger
 from database import (
+    prepare_database_location, run_all_migrations, check_database_integrity, create_database_backup,
     create_users_table, create_medications_table, create_dose_records_table,
     create_care_recipients_table, add_recipient_id_column, add_quantity_and_expiry_columns,
     create_medication_schedules_table, add_schedule_id_column_to_dose_records, migrate_comma_times_to_schedules,
@@ -17,9 +19,6 @@ from database import (
     update_medication, delete_medication, decrement_quantity, refill_medication,
     insert_care_recipient, update_care_recipient, delete_care_recipient, get_care_recipients_for_caregiver
 )
-
-LOW_STOCK_THRESHOLD = 5
-EXPIRY_WARNING_DAYS = 30
 
 def _parse_single_time(time_str):
     if not time_str or not isinstance(time_str, str):
@@ -122,7 +121,7 @@ def main(page: ft.Page):
             title = "MediTrack Reminder"
             message_text = f"Time to take {med[2]} ({med[3]}){time_display}"
 
-        print(f"[send_alert] {message_text}")
+        logger.info(f"[send_alert] {message_text}")
         win_notify(title, message_text, scenario="reminder")
 
     def watcher_loop(stop_event):
@@ -132,7 +131,7 @@ def main(page: ft.Page):
                 now_str = now_dt.strftime("%H:%M")
                 today_str = date.today().isoformat()
                 meds = get_medications_for_user(current_user["id"])
-                print(f"[watcher] now={now_str}, checking {len(meds)} medication(s)...")
+                logger.debug(f"[watcher] now={now_str}, checking {len(meds)} medication(s)...")
                 for med in meds:
                     med_id = med[0]
                     # Query individual schedule slots from normalized table
@@ -1060,13 +1059,12 @@ def main(page: ft.Page):
     route_change(None)
 
 if __name__ == "__main__":
-    create_users_table()
-    create_medications_table()
-    create_dose_records_table()
-    create_care_recipients_table()
-    add_recipient_id_column()
-    add_quantity_and_expiry_columns()
-    create_medication_schedules_table()
-    add_schedule_id_column_to_dose_records()
-    migrate_comma_times_to_schedules()
+    logger.info(f"Starting MediTrack v{APP_VERSION}...")
+    prepare_database_location()  # Creates AppData folders, migrates legacy DB, creates baseline backup
+    run_all_migrations()         # Version-controlled sequential migrations
+    is_ok, check_msgs = check_database_integrity()
+    if is_ok:
+        logger.info("Database integrity check passed.")
+    else:
+        logger.warning(f"Database integrity warning: {check_msgs}")
     ft.run(main)

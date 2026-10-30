@@ -84,23 +84,24 @@ python test_database.py
 
 Tests use a separate `test_meditrack.db` file so they never touch your real data.
 
-## Roadmap
+## Roadmap & Milestone Progress
 
-- [x] Authentication (registration, login, password hashing)
-- [x] Medication CRUD
-- [x] Dose tracking + history
-- [x] Background reminders with desktop notifications
-- [x] Multi-screen navigation
-- [x] Caregiver mode (manage medications for a care recipient)
-- [x] Low-stock and expiry warnings
-- [x] Adherence percentage / statistics
-- [x] UI redesign (Figma-based visual pass)
-- [x] Automated tests
+- [x] Authentication (registration, login, salted bcrypt password hashing)
+- [x] Medication CRUD (single and atomic batch insertion)
+- [x] First Normal Form (1NF) schema normalization (`medication_schedules`)
+- [x] Dose tracking linked to scheduled slots
+- [x] Fault-tolerant background reminder daemon with 15-minute catch-up window
+- [x] Caregiver mode with custom recipient badges and dynamic filter chips
+- [x] Quick stock refill modal dialog
+- [x] Inventory & expiry alerts (low stock warning $\le 5$ pills, expiry $\le 30$ days)
+- [x] Physician-ready Adherence CSV export (`~/Documents/`)
+- [x] Multi-version database persistence (`%APPDATA%/MediTrack/`)
+- [x] Automated schema migration engine with integrity checks and backups
+- [x] Automated CI/CD quality assurance pipeline (GitHub Actions)
+- [x] 23-test automated test suite (100% passing)
+
+For detailed architectural specifications, maintenance procedures, and redevelopment roadmaps, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Important note
 
-MediTrack is a reminder and management tool only. It does not diagnose conditions, prescribe medication, or offer medical advice, it manages information and schedules that the user has entered themselves. Always consult a doctor or pharmacist for medical decisions.
-
-git add README.md
-git commit -m "Add README with project overview, architecture, and setup instructions"
-git push
+MediTrack is a reminder and management tool only. It does not diagnose conditions, prescribe medication, or offer medical advice; it manages information and schedules that the user has entered themselves. Always consult a doctor or pharmacist for medical decisions.

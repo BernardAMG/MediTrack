@@ -11,15 +11,7 @@ class TestDatabase(unittest.TestCase):
 
     def setUp(self):
         database.DATABASE_FILE = TEST_DB
-        database.create_users_table()
-        database.create_medications_table()
-        database.create_dose_records_table()
-        database.create_care_recipients_table()
-        database.add_recipient_id_column()
-        database.add_quantity_and_expiry_columns()
-        database.create_medication_schedules_table()
-        database.add_schedule_id_column_to_dose_records()
-        database.migrate_comma_times_to_schedules()
+        database.run_all_migrations()
 
     def tearDown(self):
         """Runs after every single test method — cleans up the test database file."""
@@ -289,6 +281,83 @@ class TestDatabase(unittest.TestCase):
         meds2 = database.get_medications_for_user(user_id)
         aspirin = next(m for m in meds2 if m[0] == med_id2)
         self.assertEqual(aspirin[9], 50)
+
+    def test_prepare_database_location(self):
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        orig_app_data = database.APP_DATA_DIR
+        orig_db_file = database.DATABASE_FILE
+        orig_legacy = database.LEGACY_DATABASE_FILE
+        orig_backup = database.BACKUP_FILE
+
+        try:
+            fake_app_data = os.path.join(temp_dir, "MediTrack")
+            fake_db = os.path.join(fake_app_data, "meditrack.db")
+            fake_legacy = os.path.join(temp_dir, "legacy.db")
+            fake_backup = os.path.join(fake_app_data, "meditrack.pre-migration.bak")
+
+            # Create fake legacy file
+            with open(fake_legacy, "w") as f:
+                f.write("legacy data")
+
+            database.APP_DATA_DIR = fake_app_data
+            database.DATABASE_FILE = fake_db
+            database.LEGACY_DATABASE_FILE = fake_legacy
+            database.BACKUP_FILE = fake_backup
+
+            # Run prepare_database_location
+            database.prepare_database_location()
+
+            self.assertTrue(os.path.exists(fake_app_data))
+            self.assertTrue(os.path.exists(fake_db))
+            self.assertTrue(os.path.exists(fake_backup))
+            with open(fake_db, "r") as f:
+                self.assertEqual(f.read(), "legacy data")
+        finally:
+            database.APP_DATA_DIR = orig_app_data
+            database.DATABASE_FILE = orig_db_file
+            database.LEGACY_DATABASE_FILE = orig_legacy
+            database.BACKUP_FILE = orig_backup
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_run_all_migrations_and_tracking(self):
+        # Already ran migrations in setUp, verify schema_migrations table
+        applied = database.get_applied_migrations()
+        self.assertIn(1, applied)
+        self.assertIn(2, applied)
+        self.assertIn(3, applied)
+
+        # Re-running is idempotent
+        database.run_all_migrations()
+        applied_again = database.get_applied_migrations()
+        self.assertEqual(applied, applied_again)
+
+    def test_check_database_integrity(self):
+        is_ok, msgs = database.check_database_integrity()
+        self.assertTrue(is_ok)
+        self.assertEqual(msgs, ["ok"])
+
+    def test_vacuum_database(self):
+        success = database.vacuum_database()
+        self.assertTrue(success)
+
+    def test_create_database_backup(self):
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        orig_backup_dir = database.BACKUP_DIR
+        try:
+            database.BACKUP_DIR = temp_dir
+            backup_path = database.create_database_backup("unit_test")
+            self.assertIsNotNone(backup_path)
+            self.assertTrue(os.path.exists(backup_path))
+            self.assertIn("unit_test", backup_path)
+        finally:
+            database.BACKUP_DIR = orig_backup_dir
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main()
