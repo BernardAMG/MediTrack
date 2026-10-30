@@ -3,7 +3,6 @@ import os
 import re
 import threading
 from datetime import datetime, date, timedelta
-from win11toast import notify as win_notify
 import flet as ft
 from config import APP_VERSION, LOW_STOCK_THRESHOLD, EXPIRY_WARNING_DAYS, logger
 from database import (
@@ -19,87 +18,15 @@ from database import (
     update_medication, delete_medication, decrement_quantity, refill_medication,
     insert_care_recipient, update_care_recipient, delete_care_recipient, get_care_recipients_for_caregiver
 )
-
-def _parse_single_time(time_str):
-    if not time_str or not isinstance(time_str, str):
-        return None
-
-    cleaned = time_str.strip().upper()
-    cleaned = re.sub(r"\s*:\s*", ":", cleaned)
-    cleaned = cleaned.strip("()")
-
-    formats = [
-        "%H:%M",       # 14:30 or 08:30
-        "%I:%M %p",    # 02:30 PM
-        "%I:%M%p",     # 02:30PM
-        "%I %p",       # 2 PM
-        "%I%p",        # 2PM
-    ]
-
-    for fmt in formats:
-        try:
-            parsed = datetime.strptime(cleaned, fmt)
-            return parsed.strftime("%H:%M")
-        except ValueError:
-            continue
-
-    parts = cleaned.split(":")
-    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-        h, m = int(parts[0]), int(parts[1])
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return f"{h:02d}:{m:02d}"
-
-    return None
-
-def normalize_time(time_str):
-    """
-    Parses one or multiple comma/semicolon-separated time strings.
-    Returns sorted, unique 'HH:MM, HH:MM, ...' string, or None if invalid.
-    """
-    if not time_str or not isinstance(time_str, str):
-        return None
-
-    raw_items = re.split(r"[,;]+", time_str.strip())
-    normalized_list = []
-    for item in raw_items:
-        clean_item = item.strip()
-        if not clean_item:
-            continue
-        parsed = _parse_single_time(clean_item)
-        if not parsed:
-            return None
-        normalized_list.append(parsed)
-
-    if not normalized_list:
-        return None
-
-    # Deduplicate and sort chronologically
-    sorted_unique = sorted(list(set(normalized_list)))
-    return ", ".join(sorted_unique)
-
-def should_alert(scheduled_time_str, current_dt=None, window_minutes=15):
-    """
-    Returns True if current_dt is at or after scheduled_time today,
-    but within window_minutes after the scheduled time.
-    E.g., if scheduled for 08:00, triggers between 08:00 and 08:15.
-    Prevents missed alerts if machine was busy, sleeping, or locked during the exact minute.
-    """
-    if not scheduled_time_str:
-        return False
-    if current_dt is None:
-        current_dt = datetime.now()
-
-    parts = scheduled_time_str.split(":")
-    if len(parts) != 2:
-        return False
-    try:
-        sched_h, sched_m = int(parts[0]), int(parts[1])
-    except ValueError:
-        return False
-
-    sched_dt = current_dt.replace(hour=sched_h, minute=sched_m, second=0, microsecond=0)
-    diff_seconds = (current_dt - sched_dt).total_seconds()
-    return 0 <= diff_seconds <= (window_minutes * 60)
+from services.watcher import (
+    _parse_single_time,
+    normalize_time,
+    should_alert,
+    send_alert,
+    start_watcher,
+)
+from ui.views.auth_view import build_auth_view
+from ui.components.refill_dialog import show_refill_dialog
 
 def main(page: ft.Page):
     page.title = "MediTrack"
@@ -111,46 +38,13 @@ def main(page: ft.Page):
     already_notified_today = set()
     editing_medication_id = {"value": None}
 
-    def send_alert(med, scheduled_time=None):
-        time_display = f" at {scheduled_time}" if scheduled_time else ""
-        recipient_name = med[8]
-        if recipient_name:
-            title = f"MediTrack · {recipient_name}"
-            message_text = f"Time to give {med[2]} ({med[3]}) to {recipient_name}{time_display}"
-        else:
-            title = "MediTrack Reminder"
-            message_text = f"Time to take {med[2]} ({med[3]}){time_display}"
-
-        logger.info(f"[send_alert] {message_text}")
-        win_notify(title, message_text, scenario="reminder")
-
-    def watcher_loop(stop_event):
-        while not stop_event.is_set():
-            if current_user["id"] is not None:
-                now_dt = datetime.now()
-                now_str = now_dt.strftime("%H:%M")
-                today_str = date.today().isoformat()
-                meds = get_medications_for_user(current_user["id"])
-                logger.debug(f"[watcher] now={now_str}, checking {len(meds)} medication(s)...")
-                for med in meds:
-                    med_id = med[0]
-                    # Query individual schedule slots from normalized table
-                    schedules = get_schedules_for_medication(med_id)
-                    slot_times = [s[2] for s in schedules] if schedules else []
-                    if not slot_times and med[4]:
-                        slot_times = [t.strip() for t in re.split(r"[,;]+", med[4]) if t.strip()]
-
-                    for t in slot_times:
-                        normalized_t = _parse_single_time(t) or t
-                        key = (today_str, med_id, normalized_t)
-                        if should_alert(normalized_t, current_dt=now_dt, window_minutes=15) and key not in already_notified_today:
-                            send_alert(med, scheduled_time=normalized_t)
-                            already_notified_today.add(key)
-            stop_event.wait(30)
-
+    # Start background watcher daemon from services
     watcher_stop_event = threading.Event()
-    watcher_thread = threading.Thread(target=watcher_loop, args=(watcher_stop_event,), daemon=True)
-    watcher_thread.start()
+    watcher_thread, _ = start_watcher(
+        current_user,
+        stop_event=watcher_stop_event,
+        already_notified=already_notified_today
+    )
 
     medications_list = ft.Column()
     selected_recipient_filter = {"value": "all"}
@@ -579,50 +473,13 @@ def main(page: ft.Page):
         page.update()
 
     def refill_clicked(med_id, med_name, current_qty):
-        refill_qty_field = ft.TextField(
-            label="Quantity to add",
-            value="30",
-            keyboard_type=ft.KeyboardType.NUMBER,
-            width=140
+        show_refill_dialog(
+            page,
+            med_id,
+            med_name,
+            current_qty,
+            on_refill_success=lambda: (refresh_medications_list(), refresh_warnings_list())
         )
-        error_msg = ft.Text(value="", size=12, color=ft.Colors.RED_500)
-
-        def confirm_refill(e):
-            val = refill_qty_field.value.strip()
-            if not val.isdigit() or int(val) <= 0:
-                error_msg.value = "Enter a valid positive number"
-                page.update()
-                return
-            refill_medication(med_id, int(val))
-            refresh_medications_list()
-            refresh_warnings_list()
-            page.pop_dialog()
-            page.update()
-
-        def cancel_refill(e):
-            page.pop_dialog()
-            page.update()
-
-        curr_text = f"{current_qty} pills remaining" if current_qty is not None else "Stock not tracked"
-        dlg = ft.AlertDialog(
-            title=ft.Text(f"Refill {med_name}"),
-            content=ft.Column(
-                [
-                    ft.Text(f"Current stock: {curr_text}"),
-                    refill_qty_field,
-                    error_msg,
-                ],
-                tight=True,
-                spacing=8
-            ),
-            actions=[
-                ft.TextButton("Cancel", on_click=cancel_refill),
-                ft.Button("Refill", on_click=confirm_refill),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        page.show_dialog(dlg)
-        page.update()
 
     def set_recipient_filter(val):
         selected_recipient_filter["value"] = val
@@ -918,50 +775,17 @@ def main(page: ft.Page):
         visible=False,
     )
 
-    name_field = ft.TextField(label="Name")
-    email_field = ft.TextField(label="Email")
-    password_field = ft.TextField(label="Password", password=True)
-    register_message = ft.Text(value="")
-
-    def register_clicked(e):
-        name = name_field.value
-        email = email_field.value
-        password = password_field.value
-        if not name or not email or not password:
-            register_message.value = "Please fill in all fields."
-            page.update()
-            return
-        hashed = hash_password(password)
-        success, result_message = insert_user(name, email, hashed)
-        register_message.value = result_message
-        page.update()
-
-    login_email_field = ft.TextField(label="Login Email")
-    login_password_field = ft.TextField(label="Login Password", password=True)
-    login_message = ft.Text(value="")
-
-    def login_clicked(e):
-        email = login_email_field.value
-        password = login_password_field.value
-        if not email or not password:
-            login_message.value = "Please enter email and password."
-            page.update()
-            return
-        success, result_message = login_user(email, password)
-        login_message.value = result_message
-        page.update()
-        if success:
-            user = get_user_by_email(email)
-            current_user["id"] = user[0]
-            current_user["name"] = user[1]
-            current_user["email"] = user[2]
-            refresh_medications_list()
-            refresh_dose_history()
-            refresh_adherence_stats()
-            refresh_care_recipients_list()
-            refresh_recipient_dropdown()
-            refresh_warnings_list()
-            asyncio.create_task(page.push_route("/dashboard"))
+    def on_login_success(user):
+        current_user["id"] = user[0]
+        current_user["name"] = user[1]
+        current_user["email"] = user[2]
+        refresh_medications_list()
+        refresh_dose_history()
+        refresh_adherence_stats()
+        refresh_care_recipients_list()
+        refresh_recipient_dropdown()
+        refresh_warnings_list()
+        asyncio.create_task(page.push_route("/dashboard"))
 
     def logout_clicked(e):
         current_user["id"] = None
@@ -975,24 +799,7 @@ def main(page: ft.Page):
         page.views.clear()
 
         if page.route == "/":
-            page.views.append(
-                ft.View(
-                    route="/",
-                    controls=[
-                        ft.Text("MediTrack", size=28, weight=ft.FontWeight.BOLD),
-                        ft.Text("Register", weight=ft.FontWeight.BOLD),
-                        name_field, email_field, password_field,
-                        ft.Button("Register", on_click=register_clicked),
-                        register_message,
-                        ft.Divider(),
-                        ft.Text("Login", weight=ft.FontWeight.BOLD),
-                        login_email_field, login_password_field,
-                        ft.Button("Login", on_click=login_clicked),
-                        login_message,
-                    ],
-                    scroll=ft.ScrollMode.AUTO,
-                )
-            )
+            page.views.append(build_auth_view(page, on_login_success=on_login_success))
         elif page.route == "/dashboard":
             if current_user["id"] is None:
                 asyncio.create_task(page.push_route("/"))
