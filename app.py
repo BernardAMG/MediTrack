@@ -25,8 +25,13 @@ from services.watcher import (
     send_alert,
     start_watcher,
 )
+from services.adherence import format_adherence_summary
 from ui.views.auth_view import build_auth_view
-from ui.components.refill_dialog import show_refill_dialog
+from ui.components import (
+    show_refill_dialog,
+    build_medication_card,
+    build_warnings_card,
+)
 
 def main(page: ft.Page):
     page.title = "MediTrack"
@@ -71,13 +76,7 @@ def main(page: ft.Page):
             adherence_text.value = ""
             return
         history = get_dose_history_for_user(current_user["id"])
-        total = len(history)
-        if total == 0:
-            adherence_text.value = "No doses logged yet."
-            return
-        taken_count = sum(1 for record in history if record[1] == "taken")
-        percentage = round((taken_count / total) * 100)
-        adherence_text.value = f"{percentage}% adherence ({taken_count} of {total} doses taken)"
+        adherence_text.value = format_adherence_summary(history)
 
     def mark_dose(medication_id, status, schedule_id=None):
         insert_dose_record(medication_id, status, schedule_id)
@@ -537,93 +536,13 @@ def main(page: ft.Page):
             return
 
         for med in filtered_meds:
-            med_id = med[0]
-            recipient_name = med[8]
-
-            if recipient_name:
-                recipient_badge = ft.Container(
-                    content=ft.Text(f"👤 {recipient_name}", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.BLUE_900),
-                    bgcolor=ft.Colors.BLUE_50,
-                    border=ft.Border.all(1, ft.Colors.BLUE_200),
-                    border_radius=6,
-                    padding=ft.Padding(left=6, right=6, top=1, bottom=1),
-                )
-            else:
-                recipient_badge = ft.Container(
-                    content=ft.Text("👤 Myself", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_700),
-                    bgcolor=ft.Colors.GREY_100,
-                    border=ft.Border.all(1, ft.Colors.GREY_300),
-                    border_radius=6,
-                    padding=ft.Padding(left=6, right=6, top=1, bottom=1),
-                )
-
-            take_button = ft.IconButton(
-                icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                icon_color=ft.Colors.GREEN_600,
-                tooltip="Mark as taken",
-                on_click=lambda e, mid=med_id: mark_dose(mid, "taken"),
-            )
-            skip_button = ft.IconButton(
-                icon=ft.Icons.CANCEL_OUTLINED,
-                icon_color=ft.Colors.GREY_500,
-                tooltip="Mark as skipped",
-                on_click=lambda e, mid=med_id: mark_dose(mid, "skipped"),
-            )
-            refill_button = ft.IconButton(
-                icon=ft.Icons.ADD_SHOPPING_CART_OUTLINED,
-                icon_color=ft.Colors.BLUE_600,
-                tooltip="Refill stock",
-                on_click=lambda e, mid=med_id, mname=med[2], mqty=med[9]: refill_clicked(mid, mname, mqty),
-            )
-            edit_button = ft.IconButton(
-                icon=ft.Icons.EDIT_OUTLINED,
-                icon_color=ft.Colors.GREY_500,
-                tooltip="Edit medication",
-                on_click=lambda e, m=med: enter_edit_mode(m),
-            )
-            delete_button = ft.IconButton(
-                icon=ft.Icons.DELETE_OUTLINE,
-                icon_color=ft.Colors.RED_400,
-                tooltip="Delete medication",
-                on_click=lambda e, mid=med_id: delete_clicked(mid),
-            )
-
-            stock_info = f" · 📦 {med[9]} left" if med[9] is not None else ""
-            expiry_info = f" · ⌛ Exp: {med[10]}" if med[10] else ""
-
-            card = ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Text("💊", size=18),
-                        ft.Column(
-                            [
-                                ft.Row(
-                                    [
-                                        ft.Text(f"{med[2]} · {med[3]}", size=14, weight=ft.FontWeight.W_500),
-                                        recipient_badge,
-                                    ],
-                                    spacing=6,
-                                    wrap=True,
-                                ),
-                                ft.Text(f"⏰ {med[4]} ({med[5]}){stock_info}{expiry_info}", size=12, color=ft.Colors.GREY_600),
-                            ],
-                            spacing=3,
-                            expand=True,
-                        ),
-                        take_button,
-                        skip_button,
-                        refill_button,
-                        edit_button,
-                        delete_button,
-                    ],
-                    alignment=ft.MainAxisAlignment.START,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                bgcolor=ft.Colors.WHITE,
-                border=ft.Border.all(1, ft.Colors.GREY_300),
-                border_radius=10,
-                padding=12,
-                margin=ft.Margin.only(bottom=8),
+            card = build_medication_card(
+                med=med,
+                on_take=lambda mid: mark_dose(mid, "taken"),
+                on_skip=lambda mid: mark_dose(mid, "skipped"),
+                on_refill=lambda mid, mname, mqty: refill_clicked(mid, mname, mqty),
+                on_edit=lambda m: enter_edit_mode(m),
+                on_delete=lambda mid: delete_clicked(mid),
             )
             medications_list.controls.append(card)
 
@@ -632,49 +551,13 @@ def main(page: ft.Page):
         if current_user["id"] is None:
             return
         meds = get_medications_for_user(current_user["id"])
-        today = date.today()
-        warning_lines = []
-
-        for med in meds:
-            name = med[2]
-            quantity = med[9]
-            expiry_str = med[10]
-
-            if quantity is not None and quantity <= LOW_STOCK_THRESHOLD:
-                warning_lines.append(f"{name}: only {quantity} left")
-
-            if expiry_str:
-                try:
-                    expiry = date.fromisoformat(expiry_str)
-                    days_left = (expiry - today).days
-                    if days_left < 0:
-                        warning_lines.append(f"{name}: expired on {expiry_str}")
-                    elif days_left <= EXPIRY_WARNING_DAYS:
-                        warning_lines.append(f"{name}: expires in {days_left} days ({expiry_str})")
-                except ValueError:
-                    pass
-
-        if not warning_lines:
-            return
-
-        header = ft.Row(
-            [
-                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=16),
-                ft.Text(f"{len(warning_lines)} warning{'s' if len(warning_lines) != 1 else ''}",
-                        size=13, weight=ft.FontWeight.W_500, color=ft.Colors.ORANGE_800),
-            ],
-            spacing=6,
+        card = build_warnings_card(
+            meds,
+            low_stock_threshold=LOW_STOCK_THRESHOLD,
+            expiry_warning_days=EXPIRY_WARNING_DAYS,
         )
-
-        lines = [ft.Text(line, size=13, color=ft.Colors.ORANGE_800) for line in warning_lines]
-
-        card = ft.Container(
-            content=ft.Column([header] + lines, spacing=4),
-            bgcolor=ft.Colors.ORANGE_50,
-            border_radius=12,
-            padding=14,
-        )
-        warnings_list.controls.append(card)
+        if card:
+            warnings_list.controls.append(card)
 
     def save_medication_clicked(e):
         if current_user["id"] is None:

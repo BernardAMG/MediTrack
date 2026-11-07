@@ -31,8 +31,8 @@ jobs:
 
     - name: Verify compilation and syntax
       run: |
-        python -m py_compile config.py database.py app.py test_database.py
+        python -m py_compile config.py database.py app.py test_database.py test_services.py
 
     - name: Execute automated test suite
       run: |
-        python -m unittest test_database.py -v
+        python -m unittest discover -v
