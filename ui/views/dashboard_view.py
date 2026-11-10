@@ -344,7 +344,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                                     border_radius=8,
                                     width=28,
                                     height=28,
-                                    alignment=ft.alignment.center,
+                                    alignment=ft.Alignment(0, 0),
                                 ),
                                 ft.Column(
                                     [
