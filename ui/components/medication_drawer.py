@@ -235,7 +235,7 @@ def show_medication_drawer(
         actions=[
             ft.TextButton("Cancel", on_click=handle_cancel),
             ft.Button(
-                "Save medication",
+                "Update medication" if is_editing else "Save medication",
                 bgcolor=ft.Colors.TEAL_800,
                 color=ft.Colors.WHITE,
                 on_click=handle_save,
