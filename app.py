@@ -27,8 +27,8 @@ from ui.views import build_auth_view, build_dashboard_view
 def main(page: ft.Page):
     page.title = "MediTrack"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.theme = ft.Theme(color_scheme_seed="#52734D")
-    page.dark_theme = ft.Theme(color_scheme_seed="#7CB377")
+    page.theme = ft.Theme(color_scheme_seed=ft.Colors.TEAL_800)
+    page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.TEAL_400)
     page.window.width = 1180
     page.window.height = 800
     page.window.min_width = 950

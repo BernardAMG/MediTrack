@@ -56,32 +56,32 @@ class AppTheme:
             self.banner_btn = "#B45309"
 
         else:
-            # Light Mode (Warm Sage Neutral #F2F4F0, Pure White cards, Forest Green)
-            self.bg = "#F2F4F0"                 # Soft warm sage neutral
+            # Light Mode (Crisp White cards #FFFFFF, Soft slate background #F8FAFC, Deep Teal #0F5147)
+            self.bg = "#F8FAFC"                 # Soft clean background
             self.surface = "#FFFFFF"            # Crisp white card surface
-            self.surface_alt = "#EAECE7"        # Gentle light sage off-white
-            self.border = "#DFE5DC"             # Soft sage border
-            self.border_subtle = "#EDF1EB"
+            self.surface_alt = "#F1F5F9"        # Off-white
+            self.border = "#E2E8F0"             # Subtle card border
+            self.border_subtle = "#F1F5F9"
 
-            # Text (WCAG AAA High Contrast Dark Forest)
-            self.text_primary = "#182418"       # Deep dark forest text
-            self.text_secondary = "#3D4E3D"     # Medium forest slate
-            self.text_muted = "#687B67"         # Muted sage label text
+            # Text (WCAG AAA High Contrast Dark Slate)
+            self.text_primary = "#0F172A"       # Deep dark slate text
+            self.text_secondary = "#334155"     # Medium slate
+            self.text_muted = "#64748B"         # Muted label slate
 
-            # Sage / Olive / Forest Green Accents
-            self.primary = "#52734D"            # Rich sage green (Image 2)
-            self.primary_dark = "#1B4332"       # Deep forest green (Image 1)
-            self.primary_hover = "#405D3B"
+            # Deep Teal & Healthtech Accents (matching reference PDF)
+            self.primary = "#0F5147"            # Deep pine teal (Hero & Primary button)
+            self.primary_dark = "#0F5147"
+            self.primary_hover = "#0D453C"
 
-            self.pill_active_bg = "#52734D"
-            self.pill_active_text = "#FFFFFF"
+            self.pill_active_bg = "#E6F4F1"
+            self.pill_active_text = "#0F5147"
             self.pill_inactive_bg = "#FFFFFF"
-            self.pill_inactive_text = "#3D4E3D"
+            self.pill_inactive_text = "#475569"
 
-            self.tag_bg = "#E5EDE2"             # Soft light sage badge pill
-            self.tag_text = "#2E4A28"
+            self.tag_bg = "#E6F4F1"             # Soft light teal badge
+            self.tag_text = "#0F5147"
 
-            self.hero_bg = "#52734D"            # Rich sage hero card
+            self.hero_bg = "#0F5147"            # Deep pine teal hero card
 
             # Backward compatibility aliases
             self.blue_primary = self.primary
@@ -89,12 +89,12 @@ class AppTheme:
             self.blue_pill_bg = self.tag_bg
             self.blue_pill_text = self.tag_text
 
-            self.pink_primary = "#456640"
-            self.pink_hover = "#344F30"
-            self.pink_pill_bg = "#E5EDE2"
-            self.pink_pill_text = "#2E4A28"
+            self.pink_primary = "#00695C"
+            self.pink_hover = "#004D40"
+            self.pink_pill_bg = "#E6F4F1"
+            self.pink_pill_text = "#0F5147"
 
             self.banner_bg = "#FEF3C7"          # Warm amber
             self.banner_border = "#FDE68A"
             self.banner_text = "#92400E"
-            self.banner_btn = "#92400E"
+            self.banner_btn = "#78350F"
