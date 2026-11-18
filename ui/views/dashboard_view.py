@@ -209,7 +209,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                                 bgcolor=theme.primary,
                                 color=ft.Colors.WHITE,
                                 height=34,
-                                border_radius=17,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=17)),
                                 expand=1,
                                 on_click=lambda e, mid=mid: (mark_dose(mid, "taken")),
                             ),
@@ -264,7 +264,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                             [
                                 ft.Row(
                                     [
-                                        ft.Text("YOUR DIGITAL MEDICINE", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+                                        ft.Text("YOUR DIGITAL MEDICINE", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
                                         ft.Container(
                                             content=ft.Text("Next Dose Due", size=10, weight=ft.FontWeight.BOLD, color="#1B3A25"),
                                             bgcolor="#E5EDE2",
@@ -275,7 +275,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                                     spacing=8,
                                 ),
                                 ft.Text(next_med[2], size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                                ft.Text(f"{next_med[3]}  ·  For: {next_med[8] or 'Myself'}", size=12, color=ft.Colors.WHITE70),
+                                ft.Text(f"{next_med[3]}  ·  For: {next_med[8] or 'Myself'}", size=12, color=ft.Colors.WHITE_70),
                                 ft.Container(
                                     content=ft.Row([ft.Text("🕒", size=12), ft.Text(f"Scheduled at {next_time}", size=12, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD)], spacing=6),
                                     bgcolor=ft.Colors.BLACK26,
@@ -289,13 +289,13 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                                             bgcolor=ft.Colors.WHITE,
                                             color=theme.primary_dark if not is_dark else "#111C14",
                                             height=36,
-                                            border_radius=18,
+                                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=18)),
                                             on_click=lambda e, mid=next_med[0]: mark_dose(mid, "taken"),
                                         ),
                                         ft.OutlinedButton(
                                             "Snooze 10 min",
                                             height=36,
-                                            border_radius=18,
+                                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=18)),
                                             on_click=lambda e: (page.show_snack_bar(ft.SnackBar(ft.Text("Snoozed 10 mins"))), page.update()) if hasattr(page, "show_snack_bar") else None,
                                         ),
                                     ],
@@ -310,12 +310,12 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                             content=ft.Column(
                                 [
                                     ft.Text("🧴", size=54),
-                                    ft.Text("fridays / meditrack", size=10, color=ft.Colors.WHITE70, weight=ft.FontWeight.BOLD),
+                                    ft.Text("fridays / meditrack", size=10, color=ft.Colors.WHITE_70, weight=ft.FontWeight.BOLD),
                                 ],
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                 spacing=4,
                             ),
-                            bgcolor=ft.Colors.WHITE10,
+                            bgcolor=ft.Colors.WHITE_10,
                             border_radius=18,
                             padding=16,
                             width=140,
@@ -335,9 +335,9 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                     [
                         ft.Column(
                             [
-                                ft.Text("YOUR DIGITAL MEDICINE", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+                                ft.Text("YOUR DIGITAL MEDICINE", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
                                 ft.Text("All Doses Completed!", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                                ft.Text("You are fully consistent today. Great adherence!", size=12, color=ft.Colors.WHITE70),
+                                ft.Text("You are fully consistent today. Great adherence!", size=12, color=ft.Colors.WHITE_70),
                             ],
                             spacing=4,
                             expand=True,
@@ -390,7 +390,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                 badge = ft.OutlinedButton(
                     "Take dose",
                     height=28,
-                    border_radius=14,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=14)),
                     on_click=lambda e, mid=med[0]: mark_dose(mid, "taken"),
                 )
 
@@ -505,7 +505,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                             bgcolor=theme.primary,
                             color=ft.Colors.WHITE,
                             height=38,
-                            border_radius=19,
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=19)),
                             on_click=handle_open_add_drawer,
                         ),
                     ],
@@ -542,7 +542,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                     bgcolor=theme.primary,
                     color=ft.Colors.WHITE,
                     height=34,
-                    border_radius=17,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=17)),
                     on_click=lambda e, mid=med[0]: mark_dose(mid, "taken"),
                 )
             )
@@ -578,7 +578,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                 ft.Row(
                     [
                         ft.Column([ft.Text("Daily Schedule Checklist", size=22, weight=ft.FontWeight.BOLD, color=theme.text_primary), ft.Text("Tick off daily doses as you take or administer them.", size=12, color=theme.text_muted)]),
-                        ft.Button("+ Add Schedule Slot", icon=ft.Icons.ADD, bgcolor=theme.primary, color=ft.Colors.WHITE, height=38, border_radius=19, on_click=handle_open_add_drawer),
+                        ft.Button("+ Add Schedule Slot", icon=ft.Icons.ADD, bgcolor=theme.primary, color=ft.Colors.WHITE, height=38, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=19)), on_click=handle_open_add_drawer),
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
@@ -631,7 +631,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                 ft.Row(
                     [
                         ft.Column([ft.Text("Dose History & Compliance", size=22, weight=ft.FontWeight.BOLD, color=theme.text_primary), ft.Text("Complete clinical audit trail of all logged and skipped doses.", size=12, color=theme.text_muted)]),
-                        ft.Button("Export Doctor-Ready CSV", icon=ft.Icons.DOWNLOAD, bgcolor=theme.primary, color=ft.Colors.WHITE, height=38, border_radius=19, on_click=handle_export_csv),
+                        ft.Button("Export Doctor-Ready CSV", icon=ft.Icons.DOWNLOAD, bgcolor=theme.primary, color=ft.Colors.WHITE, height=38, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=19)), on_click=handle_export_csv),
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
@@ -939,7 +939,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
         bgcolor="#52734D",
         color=ft.Colors.WHITE,
         height=38,
-        border_radius=19,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=19)),
         on_click=handle_open_add_drawer,
     )
 
@@ -1007,7 +1007,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                     bgcolor="#E5EDE2",
                     color="#2E4A28",
                     height=40,
-                    border_radius=20,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=20)),
                     on_click=handle_dock_refill,
                 ),
                 ft.Button(
@@ -1016,7 +1016,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                     bgcolor="#52734D",
                     color=ft.Colors.WHITE,
                     height=40,
-                    border_radius=20,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=20)),
                     on_click=handle_open_add_drawer,
                 ),
                 ft.Button(
@@ -1025,7 +1025,7 @@ def build_dashboard_view(page: ft.Page, current_user: dict, on_logout=None):
                     bgcolor="#E5EDE2",
                     color="#2E4A28",
                     height=40,
-                    border_radius=20,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=20)),
                     on_click=handle_export_csv,
                 ),
             ],

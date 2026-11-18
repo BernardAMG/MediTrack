@@ -66,7 +66,7 @@ def build_auth_view(page: ft.Page, on_login_success):
         bgcolor="#1B4332",
         color=ft.Colors.WHITE,
         height=44,
-        border_radius=10,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
         width=400,
     )
 
@@ -226,7 +226,7 @@ def build_auth_view(page: ft.Page, on_login_success):
                         spacing=10,
                     ),
                     height=42,
-                    border_radius=10,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=400,
                     on_click=lambda e: (setattr(auth_message, "value", "Google OAuth SSO connects automatically in production."), setattr(auth_message, "color", "#1B4332"), page.update()),
                 ),
@@ -241,7 +241,7 @@ def build_auth_view(page: ft.Page, on_login_success):
                         spacing=8,
                     ),
                     height=42,
-                    border_radius=10,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                     width=400,
                     on_click=demo_quick_login,
                 ),
@@ -298,7 +298,7 @@ def build_auth_view(page: ft.Page, on_login_success):
                                         bgcolor="#1B4332",
                                         color=ft.Colors.WHITE,
                                         height=32,
-                                        border_radius=16,
+                                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=16)),
                                         on_click=show_support,
                                     ),
                                 ],
@@ -312,7 +312,7 @@ def build_auth_view(page: ft.Page, on_login_success):
                                         content=ft.Column(
                                             [
                                                 ft.Text("meditrack", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                                                ft.Text("CarePass ID", size=8, color=ft.Colors.WHITE70),
+                                                ft.Text("CarePass ID", size=8, color=ft.Colors.WHITE_70),
                                                 ft.Text("MT-2026-GH", size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                                             ],
                                             spacing=2,
@@ -359,9 +359,9 @@ def build_auth_view(page: ft.Page, on_login_success):
                 # Pagination dots & vision toggle
                 ft.Row(
                     [
-                        ft.Container(width=6, height=6, border_radius=3, bgcolor=ft.Colors.WHITE38),
+                        ft.Container(width=6, height=6, border_radius=3, bgcolor=ft.Colors.WHITE_38),
                         ft.Container(width=16, height=6, border_radius=3, bgcolor=ft.Colors.WHITE),
-                        ft.Container(width=6, height=6, border_radius=3, bgcolor=ft.Colors.WHITE38),
+                        ft.Container(width=6, height=6, border_radius=3, bgcolor=ft.Colors.WHITE_38),
                     ],
                     alignment=ft.MainAxisAlignment.CENTER,
                     spacing=6,
