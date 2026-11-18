@@ -1,7 +1,7 @@
 """
 ui/components/medication_drawer.py
 Faithful implementation of the Page 2 Add/Edit Medication modal dialog.
-Includes medication identity, form selector, schedule, supply, and reminder toggles.
+Styled with the White, Light Blue, and Light Pink accessible theme, supporting Light/Dark modes.
 """
 import flet as ft
 from services.watcher import normalize_time
@@ -10,6 +10,7 @@ from database import (
     update_medication,
     get_care_recipients_for_caregiver
 )
+from ui.theme import AppTheme
 
 def show_medication_drawer(
     page: ft.Page,
@@ -22,6 +23,8 @@ def show_medication_drawer(
     """
     is_editing = editing_med is not None
     med_id = editing_med[0] if is_editing else None
+    is_dark = getattr(page, "theme_mode", None) == ft.ThemeMode.DARK
+    theme = AppTheme(is_dark)
 
     # Form fields
     name_field = ft.TextField(
@@ -39,8 +42,8 @@ def show_medication_drawer(
         selected_form["value"] = val
         for btn in form_buttons_row.controls:
             is_active = btn.data == val
-            btn.bgcolor = ft.Colors.TEAL_800 if is_active else ft.Colors.GREY_100
-            btn.color = ft.Colors.WHITE if is_active else ft.Colors.GREY_800
+            btn.bgcolor = theme.blue_primary if is_active else (theme.surface_alt if is_dark else ft.Colors.GREY_100)
+            btn.color = ft.Colors.WHITE if is_active else theme.text_primary
         page.update()
 
     for f_label in ["Tablet", "Capsule", "Liquid", "Injection"]:
@@ -48,7 +51,7 @@ def show_medication_drawer(
         btn = ft.Container(
             content=ft.Text(f_label, size=12, weight=ft.FontWeight.W_600),
             data=f_label,
-            bgcolor=ft.Colors.TEAL_800 if is_active else ft.Colors.GREY_100,
+            bgcolor=theme.blue_primary if is_active else (theme.surface_alt if is_dark else ft.Colors.GREY_100),
             border_radius=10,
             padding=ft.Padding(left=14, right=14, top=8, bottom=8),
             on_click=lambda e, val=f_label: set_form(val),
@@ -110,8 +113,8 @@ def show_medication_drawer(
         selected_food["value"] = val
         for btn in food_buttons_row.controls:
             is_active = btn.data == val
-            btn.bgcolor = ft.Colors.TEAL_800 if is_active else ft.Colors.GREY_100
-            btn.color = ft.Colors.WHITE if is_active else ft.Colors.GREY_800
+            btn.bgcolor = theme.pink_primary if is_active else (theme.surface_alt if is_dark else ft.Colors.GREY_100)
+            btn.color = ft.Colors.WHITE if is_active else theme.text_primary
         page.update()
 
     for food_opt in ["Before food", "With food", "After food", "Any time"]:
@@ -119,7 +122,7 @@ def show_medication_drawer(
         btn = ft.Container(
             content=ft.Text(food_opt, size=11, weight=ft.FontWeight.W_500),
             data=food_opt,
-            bgcolor=ft.Colors.TEAL_800 if is_active else ft.Colors.GREY_100,
+            bgcolor=theme.pink_primary if is_active else (theme.surface_alt if is_dark else ft.Colors.GREY_100),
             border_radius=8,
             padding=ft.Padding(left=10, right=10, top=6, bottom=6),
             on_click=lambda e, val=food_opt: set_food(val),
@@ -193,8 +196,8 @@ def show_medication_drawer(
             [
                 ft.Column(
                     [
-                        ft.Text(dialog_title, size=18, weight=ft.FontWeight.BOLD),
-                        ft.Text("Start with the basics. You can change anything later.", size=12, color=ft.Colors.GREY_600),
+                        ft.Text(dialog_title, size=18, weight=ft.FontWeight.BOLD, color=theme.text_primary),
+                        ft.Text("Start with the basics. You can change anything later.", size=12, color=theme.text_muted),
                     ],
                     spacing=2,
                 ),
@@ -205,22 +208,22 @@ def show_medication_drawer(
         content=ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("MEDICATION", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_500),
+                    ft.Text("MEDICATION", size=11, weight=ft.FontWeight.BOLD, color=theme.blue_primary),
                     name_field,
-                    ft.Text("Form", size=12, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_700),
+                    ft.Text("Form", size=12, weight=ft.FontWeight.W_500, color=theme.text_secondary),
                     form_buttons_row,
                     ft.Row([strength_field, unit_field]),
                     recipient_dropdown,
                     ft.Divider(height=10),
-                    ft.Text("SCHEDULE", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_500),
+                    ft.Text("SCHEDULE", size=11, weight=ft.FontWeight.BOLD, color=theme.blue_primary),
                     ft.Row([how_often_dropdown, dose_times_field]),
-                    ft.Text("With food", size=12, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_700),
+                    ft.Text("With food", size=12, weight=ft.FontWeight.W_500, color=theme.text_secondary),
                     food_buttons_row,
                     ft.Divider(height=10),
-                    ft.Text("SUPPLY", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_500),
+                    ft.Text("SUPPLY", size=11, weight=ft.FontWeight.BOLD, color=theme.blue_primary),
                     ft.Row([stock_field, expiry_field]),
                     ft.Divider(height=10),
-                    ft.Text("REMINDERS", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_500),
+                    ft.Text("REMINDERS", size=11, weight=ft.FontWeight.BOLD, color=theme.blue_primary),
                     push_switch,
                     sound_switch,
                     error_text,
@@ -236,7 +239,7 @@ def show_medication_drawer(
             ft.TextButton("Cancel", on_click=handle_cancel),
             ft.Button(
                 "Update medication" if is_editing else "Save medication",
-                bgcolor=ft.Colors.TEAL_800,
+                bgcolor=theme.blue_primary,
                 color=ft.Colors.WHITE,
                 on_click=handle_save,
             ),
